@@ -1,4 +1,5 @@
 import { extractJson } from "@/lib/ai/json";
+import { isEntityOwnedDomain } from "@/lib/editorial/domains";
 import { assessEvidence, claimStatus } from "@/lib/editorial/evidence";
 import { canonicalUrl } from "@/lib/editorial/text";
 import type { StageContext, StageResult } from "../context";
@@ -36,7 +37,7 @@ export async function factCheckStage(sc: StageContext): Promise<StageResult> {
 
   const claims: (ClaimInputRecord & { sources: { url: string; tier: SourceTier }[]; conflicting: boolean })[] = out.claims.map((c) => {
     const srcs = [...new Set(c.source_urls.map(canonicalUrl))].map((k) => resolved.get(k)).filter((s): s is NonNullable<typeof s> => Boolean(s));
-    const input = { text: c.text, kind: c.kind, importance: c.importance, sources: srcs.map((s) => ({ url: s.url, tier: s.quality_tier })), conflicting: c.conflicting };
+    const input = { text: c.text, kind: c.kind, importance: c.importance, sources: srcs.map((s) => ({ url: s.url, tier: isEntityOwnedDomain(s.url, cand.entities) ? ("official" as const) : s.quality_tier })), conflicting: c.conflicting };
     return { ...input, status: claimStatus(input), notes: c.notes ?? null, sourceIds: srcs.map((s) => s.id) };
   });
   await deps.store.replaceClaims(ws.workspaceId, cand.id, claims.map(({ sources: _s, conflicting: _c, ...rest }) => rest));

@@ -45,7 +45,7 @@ export function discoveryPrompt(category: Category, nowIso: string, exclude: str
     prompt: [
       `Current time (UTC): ${nowIso}.`,
       `Category: ${CATEGORY_LABEL[category]} — ${CATEGORY_SCOPE[category]}.`,
-      "Search the web with several distinct queries (official announcements, established trade publications, tournament organisers, studio/publisher newsrooms).",
+      "Search the web with a few distinct queries (official announcements, established trade publications, tournament organisers, studio/publisher newsrooms). Use at most 4 searches in total.",
       "Find up to 4 distinct stories published or announced in the last 48 hours that readers would care about in the next few hours or days.",
       "Prefer primary sources and established publications. Skip content farms, unsourced rumours, social posts without corroboration, and stories outside this category.",
       "Distinguish the source publication date from the date the event happens (event_date).",
@@ -125,17 +125,38 @@ export function normalizeClaim(v: unknown): unknown {
       .map((x) => (typeof x === "string" ? x : x && typeof x === "object" ? (x as { url?: unknown }).url : undefined))
       .filter((x): x is string => typeof x === "string");
   }
+  // Keep only well-formed URLs (a bad one can only lower a claim's evidence status), at most 6.
+  if (Array.isArray(o.source_urls)) {
+    o.source_urls = (o.source_urls as unknown[])
+      .filter((x): x is string => typeof x === "string" && /^https?:\/\/[^\s]+$/i.test(x.trim()))
+      .map((x) => x.trim())
+      .slice(0, 6);
+  }
+  if (typeof o.notes === "string") o.notes = o.notes.slice(0, 400);
+  if (typeof o.text === "string") o.text = o.text.trim();
   for (const k of ["kind", "importance"] as const) if (typeof o[k] === "string") o[k] = (o[k] as string).trim().toLowerCase();
   return o;
 }
 
-export const factCheckSchema = z.object({
+/** Bound list sizes instead of failing a whole stage over verbose output; keep key claims first. */
+export function normalizeFactCheck(v: unknown): unknown {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return v;
+  const o: Record<string, unknown> = { ...(v as Record<string, unknown>) };
+  const isHigh = (c: unknown) => (c && typeof c === "object" && String((c as { importance?: unknown }).importance).toLowerCase() === "high" ? 1 : 0);
+  if (Array.isArray(o.claims) && o.claims.length > 25) o.claims = [...o.claims].sort((a, b) => isHigh(b) - isHigh(a)).slice(0, 25);
+  if (Array.isArray(o.open_questions)) {
+    o.open_questions = (o.open_questions as unknown[]).filter((x): x is string => typeof x === "string").map((x) => x.slice(0, 300)).slice(0, 8);
+  }
+  return o;
+}
+
+export const factCheckSchema = z.preprocess(normalizeFactCheck, z.object({
   claims: z
     .array(
       z.preprocess(
         normalizeClaim,
         z.object({
-          text: z.string().min(5).max(500),
+          text: z.string().min(5).max(1000),
           kind: z.enum(["fact", "rumor", "prediction", "opinion", "quote"]),
           importance: z.enum(["high", "normal"]),
           source_urls: z.array(z.string().url()).max(6).default([]),
@@ -147,7 +168,7 @@ export const factCheckSchema = z.object({
     .min(1)
     .max(25),
   open_questions: z.array(z.string().max(300)).max(8).default([]),
-});
+}));
 export type FactCheckOutput = z.infer<typeof factCheckSchema>;
 
 export function factCheckPrompt(c: { headline: string; summary: string; category: string; sourceUrls: string[] }, nowIso: string) {
@@ -161,8 +182,8 @@ export function factCheckPrompt(c: { headline: string; summary: string; category
       `Story (${c.category}): ${c.headline}`,
       `Reported development: ${c.summary}`,
       c.sourceUrls.length ? `Initial sources:\n- ${c.sourceUrls.join("\n- ")}` : "",
-      "Search for the primary source and for independent corroboration. Then list the important claims a news article about this would make: names, dates, numbers, results, affiliations, platforms, prices, quotes.",
-      "Each claim is an object with EXACTLY these keys: text (the claim as one self-contained sentence), kind (fact, rumor, prediction, opinion or quote), importance (high for claims central to the story, otherwise normal), source_urls (array of only URLs from your search results that directly support the claim), conflicting (true if sources disagree), notes (e.g. 'only reported by one outlet', 'date refers to JP release', or null).",
+      "Use at most 3 searches in total. Search for the primary source and for independent corroboration. Then list the important claims a news article about this would make: names, dates, numbers, results, affiliations, platforms, prices, quotes.",
+      "Each claim is an object with EXACTLY these keys: text (the claim as one self-contained sentence, under 300 characters), kind (fact, rumor, prediction, opinion or quote), importance (high for claims central to the story, otherwise normal), source_urls (array of EVERY URL from your search results that directly supports the claim, up to 4: if several outlets report it, list them all, because independent confirmation is required), conflicting (true if sources disagree), notes (e.g. 'only reported by one outlet', 'date refers to JP release', or null).",
       "Quotes must be verbatim from a source and attributed in the claim text. Do not include claims you could not find support for unless you mark them with no source_urls.",
       'Respond with ONLY a JSON object, for example: {"claims": [{"text": "The update launches on October 30.", "kind": "fact", "importance": "high", "source_urls": ["https://example.com/announcement"], "conflicting": false, "notes": null}], "open_questions": []}',
     ]

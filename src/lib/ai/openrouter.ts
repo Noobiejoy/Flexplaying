@@ -44,11 +44,24 @@ function num(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
+/**
+ * With BYOK (your own Google key attached in OpenRouter) OpenRouter reports its
+ * own fee in `cost` (often 0) and what the provider billed your key in
+ * `cost_details.upstream_inference_cost`. The real spend is the sum.
+ */
+export function reportedCost(u: Json): number | null {
+  const own = num(u.cost);
+  const upstream = num(((u.cost_details ?? {}) as Json).upstream_inference_cost);
+  if (u.is_byok === true) return own === null && upstream === null ? null : (own ?? 0) + (upstream ?? 0);
+  return own;
+}
+
 export function parseUsage(model: string, body: Json): AiUsage {
   const u = (body.usage ?? {}) as Json;
   const ptd = (u.prompt_tokens_details ?? {}) as Json;
   const ctd = (u.completion_tokens_details ?? {}) as Json;
   const stu = (u.server_tool_use ?? {}) as Json;
+  const stuDetails = (u.server_tool_use_details ?? {}) as Json;
   return {
     ...emptyUsage(typeof body.model === "string" ? body.model : model),
     generationId: typeof body.id === "string" ? body.id : null,
@@ -56,9 +69,9 @@ export function parseUsage(model: string, body: Json): AiUsage {
     outputTokens: num(u.completion_tokens),
     reasoningTokens: num(ctd.reasoning_tokens),
     cachedTokens: num(ptd.cached_tokens),
-    webSearches: num(stu.web_search_requests) ?? num(u.web_search_requests),
+    webSearches: num(stuDetails.web_search_requests) ?? num(stu.web_search_requests) ?? num(u.web_search_requests),
     images: null,
-    costUsd: num(u.cost),
+    costUsd: reportedCost(u),
     raw: u,
   };
 }

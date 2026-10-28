@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { OpenRouterProvider, parseCitations, verifyModel } from "@/lib/ai/openrouter";
+import { OpenRouterProvider, parseCitations, parseUsage, verifyModel } from "@/lib/ai/openrouter";
+import { isEntityOwnedDomain } from "@/lib/editorial/domains";
 import { AiError, emptyUsage } from "@/lib/ai/types";
 import { extractJson } from "@/lib/ai/json";
 import { costFor } from "@/lib/costs/pricing";
@@ -201,5 +202,66 @@ describe("fact-check output parsing", () => {
   it("still rejects claims with no wording or an unknown kind", () => {
     expect(() => extractJson(JSON.stringify({ claims: [{ kind: "fact", importance: "high" }] }), factCheckSchema)).toThrow(AiError);
     expect(() => extractJson(JSON.stringify({ claims: [{ text: "A valid sentence here.", kind: "gossip", importance: "high" }] }), factCheckSchema)).toThrow(AiError);
+  });
+});
+
+describe("usage and cost parsing (BYOK)", () => {
+  it("adds the provider cost back when OpenRouter reports $0 for a BYOK call (real response shape)", () => {
+    const u = parseUsage("google/gemini-3.7-flash", {
+      id: "gen-1",
+      usage: {
+        cost: 0,
+        is_byok: true,
+        cost_details: { upstream_inference_cost: 0.1897495, upstream_inference_prompt_cost: 0.001467, upstream_inference_completions_cost: 0.0342825 },
+        prompt_tokens: 978,
+        completion_tokens: 4571,
+        server_tool_use_details: { web_search_requests: 11 },
+      },
+    });
+    expect(u.costUsd).toBeCloseTo(0.1897495, 6);
+    expect(u.webSearches).toBe(11);
+  });
+  it("uses the plain cost for non-BYOK calls and null when nothing is reported", () => {
+    expect(parseUsage("m", { usage: { cost: 0.0123 } }).costUsd).toBe(0.0123);
+    expect(parseUsage("m", { usage: {} }).costUsd).toBeNull();
+  });
+});
+
+describe("fact-check output limits", () => {
+  const base = { kind: "fact", importance: "high", source_urls: ["https://www.ign.com/a"] };
+  it("accepts long claims, trims verbose notes and drops malformed URLs instead of failing", () => {
+    const out = extractJson(
+      JSON.stringify({
+        claims: [{ ...base, text: "x".repeat(700), notes: "n".repeat(900), source_urls: ["https://www.ign.com/a", "not a url", "ftp://x", "https://www.pcgamer.com/b"] }],
+        open_questions: ["q".repeat(600)],
+      }),
+      factCheckSchema,
+    );
+    expect(out.claims[0]!.text).toHaveLength(700);
+    expect(out.claims[0]!.notes).toHaveLength(400);
+    expect(out.claims[0]!.source_urls).toEqual(["https://www.ign.com/a", "https://www.pcgamer.com/b"]);
+    expect(out.open_questions[0]).toHaveLength(300);
+  });
+  it("keeps the 25 most important claims when the model returns too many", () => {
+    const claims = Array.from({ length: 30 }, (_, i) => ({ ...base, text: `Claim number ${i} here`, importance: i >= 27 ? "high" : "normal" }));
+    const out = extractJson(JSON.stringify({ claims }), factCheckSchema);
+    expect(out.claims).toHaveLength(25);
+    expect(out.claims.slice(0, 3).every((c) => c.importance === "high")).toBe(true);
+  });
+  it("asks for every supporting URL and limits searches", () => {
+    const p = factCheckPrompt({ headline: "h", summary: "s", category: "gaming", sourceUrls: [] }, "2026-10-28T00:00:00Z").prompt;
+    expect(p).toMatch(/EVERY URL/);
+    expect(p).toMatch(/at most 3 searches/);
+  });
+});
+
+describe("official-source recognition", () => {
+  it("treats a subject's own domain as official but not look-alikes, social or wiki hosts", () => {
+    const entities = ["Funcom", "Conan Exiles Enhanced", "Nintendo", "Reddit"];
+    expect(isEntityOwnedDomain("https://www.funcom.com/news/enhanced", entities)).toBe(true);
+    expect(isEntityOwnedDomain("https://www.nintendolife.com/news/x", entities)).toBe(false);
+    expect(isEntityOwnedDomain("https://www.reddit.com/r/games/x", entities)).toBe(false);
+    expect(isEntityOwnedDomain("https://funcom.blogspot.com/x", entities)).toBe(false);
+    expect(isEntityOwnedDomain("https://www.ign.com/x", entities)).toBe(false);
   });
 });

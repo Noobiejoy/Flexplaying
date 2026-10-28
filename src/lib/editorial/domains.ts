@@ -86,3 +86,26 @@ export function isCorroborationEligible(tier: SourceTier, url: string): boolean 
   const d = domainOf(url);
   return !["reddit.com", "x.com", "twitter.com", "fandom.com", "wikipedia.org"].some((s) => d === s || d.endsWith(`.${s}`));
 }
+
+const TWO_PART_TLDS = new Set(["co.uk", "com.au", "co.jp", "co.kr", "com.br", "co.in", "com.sg"]);
+
+function registrableLabel(url: string): string {
+  const parts = domainOf(url).split(".");
+  if (parts.length < 2) return "";
+  const lastTwo = parts.slice(-2).join(".");
+  return TWO_PART_TLDS.has(lastTwo) && parts.length >= 3 ? parts[parts.length - 3]! : parts[parts.length - 2]!;
+}
+
+/**
+ * True when the URL is the subject's own website, e.g. funcom.com for a story
+ * about Funcom. The domain name must equal the entity name exactly (so
+ * nintendolife.com is not Nintendo), and social, wiki and low-quality hosts
+ * never qualify.
+ */
+export function isEntityOwnedDomain(url: string, entities: string[]): boolean {
+  const tier = defaultDomainRegistry.tierFor(url);
+  if (tier === "low" || tier === "standard") return false;
+  const label = registrableLabel(url);
+  if (label.length < 4) return false;
+  return entities.some((e) => e.toLowerCase().replace(/[^a-z0-9]+/g, "") === label);
+}

@@ -58,7 +58,7 @@ export default async function Costs({ searchParams }: { searchParams: Promise<Re
     <>
       <PageHeader title="Costs & usage" description="AI usage recorded for every call. Costs come from OpenRouter's response when it reports them; otherwise they're estimated from your pricing table, or marked unknown." />
       <Flash searchParams={searchParams} />
-      <div className="mb-4"><Notice>All workspaces share the server&apos;s OpenRouter API key, so every charge goes to the owner of that key. This page breaks usage down by workspace for visibility only. It does not create separate billing accounts.</Notice></div>
+      <div className="mb-4"><Notice>All workspaces share the server&apos;s OpenRouter key, so every charge goes to that key&apos;s owner. If your own Google key is attached in OpenRouter (BYOK), Google bills it directly and OpenRouter reports $0 itself; this page adds the provider cost back in. This page breaks usage down by workspace for visibility only. It does not create separate billing accounts.</Notice></div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Stat label="Today" value={formatUsd(sum(u.filter((r) => r.created_at >= today)))} hint={`${unknown(u.filter((r) => r.created_at >= today))} call(s) with unknown cost`} />
         <Stat label="This month" value={formatUsd(sum(u.filter((r) => r.created_at >= month)))} hint={`${unknown(u.filter((r) => r.created_at >= month))} call(s) with unknown cost`} />

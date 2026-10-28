@@ -1,4 +1,3 @@
-import sharp from "sharp";
 import { escapeHtml } from "@/lib/editorial/sanitize";
 
 export const THUMB_WIDTH = 1200;
@@ -38,6 +37,9 @@ export async function composeThumbnail(
   source: Buffer,
   opts: { overlayText?: string | null; label?: string | null } = {},
 ): Promise<ComposedImage> {
+  // Loaded lazily so a missing native image library only fails the thumbnail
+  // stage (which has its own failure policy), never the whole scheduler tick.
+  const { default: sharp } = await import("sharp");
   const meta = await sharp(source).metadata();
   if (!meta.width || !meta.height) throw new Error("Generated image could not be decoded");
   if (meta.width < 512 || meta.height < 288) throw new Error(`Generated image too small (${meta.width}×${meta.height})`);

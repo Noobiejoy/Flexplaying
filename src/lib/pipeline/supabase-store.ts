@@ -4,6 +4,7 @@ import type { Category } from "@/lib/editorial/categories";
 import { parsePreferences, DEFAULT_PREFERENCES } from "@/lib/editorial/preferences";
 import type { PricingRow } from "@/lib/costs/pricing";
 import { normalizeHHMM } from "@/lib/schedule/slots";
+import { uniqueBy } from "./unique";
 import type {
   ArticleInput,
   ArticleRecord,
@@ -157,7 +158,7 @@ export class SupabaseStore implements PipelineStore {
 
   async upsertSources(workspaceId: string, sources: SourceInput[]) {
     if (sources.length === 0) return [];
-    const rows = sources.map((s) => ({ ...s, workspace_id: workspaceId }));
+    const rows = uniqueBy(sources, (s) => s.url).map((s) => ({ ...s, workspace_id: workspaceId }));
     const data = must(await this.db.from("sources").upsert(rows, { onConflict: "workspace_id,url", ignoreDuplicates: false }).select("*"), "upsert sources") as SourceRecord[];
     return sources.map((s) => data.find((d) => d.url === s.url)!).map((s) => ({ ...s, quality_score: Number(s.quality_score) }));
   }
@@ -165,7 +166,7 @@ export class SupabaseStore implements PipelineStore {
   async linkCandidateSources(candidateId: string, workspaceId: string, sourceIds: string[], origin: string) {
     if (sourceIds.length === 0) return;
     must(
-      await this.db.from("candidate_sources").upsert(sourceIds.map((id) => ({ candidate_id: candidateId, source_id: id, workspace_id: workspaceId, origin })), { onConflict: "candidate_id,source_id", ignoreDuplicates: true }),
+      await this.db.from("candidate_sources").upsert([...new Set(sourceIds)].map((id) => ({ candidate_id: candidateId, source_id: id, workspace_id: workspaceId, origin })), { onConflict: "candidate_id,source_id", ignoreDuplicates: true }),
       "link sources",
     );
   }
@@ -183,7 +184,7 @@ export class SupabaseStore implements PipelineStore {
         "insert claim",
       ) as { id: string };
       if (c.sourceIds.length) {
-        must(await this.db.from("claim_sources").insert(c.sourceIds.map((sid) => ({ claim_id: row.id, source_id: sid, workspace_id: workspaceId }))), "claim sources");
+        must(await this.db.from("claim_sources").insert([...new Set(c.sourceIds)].map((sid) => ({ claim_id: row.id, source_id: sid, workspace_id: workspaceId }))), "claim sources");
       }
     }
   }
@@ -203,8 +204,7 @@ export class SupabaseStore implements PipelineStore {
 
   async upsertWpPosts(workspaceId: string, posts: ExistingPost[]) {
     if (posts.length === 0) return;
-    const rows = posts
-      .filter((p) => p.origin === "wordpress")
+    const rows = uniqueBy(posts.filter((p) => p.origin === "wordpress"), (p) => p.id)
       .map((p) => ({ workspace_id: workspaceId, wp_id: p.id, slug: p.slug, title: p.title, link: p.link, status: p.status, date_gmt: p.dateGmt ?? null, excerpt: p.excerpt.slice(0, 600), synced_at: new Date().toISOString() }));
     for (let i = 0; i < rows.length; i += 200) {
       must(await this.db.from("wp_posts").upsert(rows.slice(i, i + 200), { onConflict: "workspace_id,wp_id" }), "upsert wp posts");

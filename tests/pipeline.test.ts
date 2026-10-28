@@ -99,6 +99,15 @@ describe("editorial pipeline (mock providers)", () => {
     expect(selected?.headline).toContain("Chainsaw Man");
   });
 
+  it("handles one existing post matching several search terms (regression: duplicate upsert keys)", async () => {
+    const h = await harness();
+    // Matches both the "Frieren" and "Madhouse" searches, so it is returned more than once.
+    h.wp.seedPost({ title: "Madhouse studio profile", excerpt: "A look at the studio behind Frieren and other series." });
+    const final = await runToEnd(h, (await newRun(h)).id);
+    expect(final.status).toBe("drafted");
+    expect(h.store.wpPosts.filter((p) => p.id === h.wp.posts[0]!.id)).toHaveLength(1);
+  });
+
   it("skips publishing when no candidate meets the threshold", async () => {
     const h = await harness({ settings: { min_candidate_score: 0.99 } });
     const run = await newRun(h);

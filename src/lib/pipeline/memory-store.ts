@@ -25,6 +25,13 @@ import {
   type WordPressConnectionInfo,
 } from "./types";
 
+/** Postgres rejects an upsert that touches the same key twice in one statement; mirror that. */
+function assertUniqueKeys(table: string, keys: string[]) {
+  if (new Set(keys).size !== keys.length) {
+    throw new Error(`Database error (${table}): ON CONFLICT DO UPDATE command cannot affect row a second time`);
+  }
+}
+
 export function defaultSettings(workspaceId: string, overrides: Partial<WorkspaceSettings> = {}): WorkspaceSettings {
   return {
     workspace_id: workspaceId,
@@ -233,6 +240,7 @@ export class MemoryStore implements PipelineStore {
   }
 
   async upsertSources(_workspaceId: string, sources: SourceInput[]) {
+    assertUniqueKeys("upsert sources", sources.map((x) => x.url));
     const out: SourceRecord[] = [];
     for (const s of sources) {
       let rec = this.sources.find((x) => x.url === s.url);
@@ -250,6 +258,7 @@ export class MemoryStore implements PipelineStore {
   }
 
   async linkCandidateSources(candidateId: string, _ws: string, sourceIds: string[], origin: string) {
+    assertUniqueKeys("link sources", sourceIds);
     for (const sid of sourceIds) {
       if (!this.candidateSources.some((x) => x.candidate_id === candidateId && x.source_id === sid)) {
         this.candidateSources.push({ candidate_id: candidateId, source_id: sid, origin });
@@ -288,6 +297,7 @@ export class MemoryStore implements PipelineStore {
   }
 
   async upsertWpPosts(workspaceId: string, posts: ExistingPost[]) {
+    assertUniqueKeys("upsert wp posts", posts.filter((p) => p.origin === "wordpress").map((p) => String(p.id)));
     for (const p of posts) {
       this.wpPosts = this.wpPosts.filter((x) => !(x.workspace_id === workspaceId && x.id === p.id));
       this.wpPosts.push({ ...p, workspace_id: workspaceId });

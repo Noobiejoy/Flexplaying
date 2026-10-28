@@ -2,6 +2,7 @@ import { extractJson } from "@/lib/ai/json";
 import { findMatches, searchTerms, type DuplicateMatch, type ExistingPost } from "@/lib/editorial/dedupe";
 import { WpError, type WpPostSummary } from "@/lib/wordpress/types";
 import type { StageContext, StageResult } from "../context";
+import { uniqueBy } from "../unique";
 import { dedupeJsonSchema, dedupePrompt, dedupeSchema } from "../prompts";
 import type { CandidateRecord } from "../types";
 import { finalStatusForProduced } from "./research";
@@ -19,7 +20,7 @@ export async function syncWordPressPosts(sc: StageContext): Promise<{ count: num
     const wp = await sc.wp();
     const after = new Date(deps.now().getTime() - 180 * 86_400_000).toISOString();
     const posts = await wp.listPosts({ statuses: ALL_STATUSES, after, perPage: 100, maxPages: 5 });
-    await deps.store.upsertWpPosts(ws.workspaceId, posts.map(toExisting));
+    await deps.store.upsertWpPosts(ws.workspaceId, uniqueBy(posts.map(toExisting), (p) => p.id));
     await deps.store.recordWpSync({ workspace_id: ws.workspaceId, run_id: run.id, article_id: null, action: "sync_posts", status: "ok", wp_id: null, detail: { count: posts.length, after } });
     return { count: posts.length, ok: true };
   } catch (e) {
@@ -73,6 +74,8 @@ export async function dedupeStage(sc: StageContext): Promise<StageResult> {
           await sc.log("warning", `WordPress search for "${term}" failed: ${(e as Error).message}`);
         }
       }
+      // The same post commonly matches several search terms; store each only once.
+      searched = uniqueBy(searched, (p) => p.id);
       await deps.store.upsertWpPosts(ws.workspaceId, searched.map((p) => ({ ...p, content: undefined })));
     }
     const byId = new Map<string, ExistingPost>();

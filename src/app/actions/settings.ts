@@ -178,7 +178,7 @@ export async function checkModels(fd: FormData) {
 const wpSchema = z.object({
   site_url: z.string().min(8).max(200),
   username: z.string().trim().min(1).max(120),
-  app_password: z.string().trim().regex(/^[A-Za-z0-9 ]{16,64}$/, "Application passwords are 24 letters/numbers (spaces allowed)").or(z.literal("")),
+  app_password: z.string().trim().regex(/^[A-Za-z0-9 ]{16,64}$/, "This looks like a login password. Use an Application Password instead: in WordPress go to Users → Profile → Application Passwords, add one named EditorialOS and paste the 24-character code (e.g. abcd EFGH 1234 ijkl MNOP 5678)").or(z.literal("")),
 });
 
 export async function saveWordPressConnection(fd: FormData) {

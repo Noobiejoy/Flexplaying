@@ -172,7 +172,7 @@ export default async function Settings({ searchParams }: { searchParams: Promise
               <Hidden ws={ws} />
               <Field label="Site URL (https)"><input className="field" name="site_url" defaultValue={conn?.site_url ?? "https://flexplaying.com"} required /></Field>
               <Field label="WordPress username"><input className="field" name="username" defaultValue={conn?.username ?? ""} required autoComplete="off" /></Field>
-              <Field label={conn ? "New application password (leave blank to keep)" : "Application password"} hint="WordPress → Users → Profile → Application Passwords"><input className="field" name="app_password" type="password" autoComplete="new-password" required={!conn} /></Field>
+              <Field label={conn ? "New application password (leave blank to keep)" : "Application password"} hint="Not your login password. Create one in WordPress → Users → Profile → Application Passwords (24 characters, shown once)."><input className="field" name="app_password" type="password" autoComplete="new-password" required={!conn} /></Field>
               <div className="flex flex-wrap gap-2 md:col-span-3">
                 <Button>{conn ? "Save & re-test (rotate credential)" : "Connect & test"}</Button>
               </div>

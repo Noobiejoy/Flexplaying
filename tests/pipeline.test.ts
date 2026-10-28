@@ -108,6 +108,20 @@ describe("editorial pipeline (mock providers)", () => {
     expect(h.store.wpPosts.filter((p) => p.id === h.wp.posts[0]!.id)).toHaveLength(1);
   });
 
+  it("completes when the fact-check model names the claim field differently (regression)", async () => {
+    const renamed = JSON.stringify({
+      claims: (JSON.parse(factCheckJson()) as { claims: { text: string }[] }).claims.map(({ text, ...rest }) => ({ claim: text, ...rest })),
+    });
+    const h = await harness({
+      research: (prompt) => {
+        if (prompt.includes("Story (")) return mockText(renamed, { citations: [ANN, CR, IGN].map((url) => ({ url, title: null, snippet: null, startIndex: null, endIndex: null })) });
+        if (prompt.includes("Category: Anime")) return mockText(discoveryJson(), { citations: [] });
+        return mockText(JSON.stringify({ candidates: [] }));
+      },
+    });
+    expect((await runToEnd(h, (await newRun(h)).id)).status).toBe("drafted");
+  });
+
   it("skips publishing when no candidate meets the threshold", async () => {
     const h = await harness({ settings: { min_candidate_score: 0.99 } });
     const run = await newRun(h);

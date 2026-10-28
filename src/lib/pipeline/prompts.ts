@@ -101,17 +101,48 @@ export function dedupePrompt(candidate: { headline: string; summary: string }, e
 // ---------------------------------------------------------------------------
 // Stage D: fact-check
 // ---------------------------------------------------------------------------
+/**
+ * Search-grounded calls cannot use strict JSON-schema output, so the model may
+ * pick its own key names. Accept the obvious synonyms for the claim wording and
+ * its sources, and tidy enum casing, before strict validation. Anything else
+ * (unknown kinds, missing wording) still fails validation and is retried.
+ */
+export function normalizeClaim(v: unknown): unknown {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return v;
+  const o: Record<string, unknown> = { ...(v as Record<string, unknown>) };
+  if (typeof o.text !== "string") {
+    for (const k of ["claim", "statement", "claim_text", "description", "fact"]) {
+      if (typeof o[k] === "string") {
+        o.text = o[k];
+        break;
+      }
+    }
+  }
+  if (o.source_urls === undefined) {
+    const alt = o.sources ?? o.urls ?? o.source_url ?? o.source;
+    const list = Array.isArray(alt) ? alt : typeof alt === "string" ? [alt] : [];
+    o.source_urls = list
+      .map((x) => (typeof x === "string" ? x : x && typeof x === "object" ? (x as { url?: unknown }).url : undefined))
+      .filter((x): x is string => typeof x === "string");
+  }
+  for (const k of ["kind", "importance"] as const) if (typeof o[k] === "string") o[k] = (o[k] as string).trim().toLowerCase();
+  return o;
+}
+
 export const factCheckSchema = z.object({
   claims: z
     .array(
-      z.object({
-        text: z.string().min(5).max(500),
-        kind: z.enum(["fact", "rumor", "prediction", "opinion", "quote"]),
-        importance: z.enum(["high", "normal"]),
-        source_urls: z.array(z.string().url()).max(6).default([]),
-        conflicting: z.boolean().default(false),
-        notes: z.string().max(400).nullable().optional(),
-      }),
+      z.preprocess(
+        normalizeClaim,
+        z.object({
+          text: z.string().min(5).max(500),
+          kind: z.enum(["fact", "rumor", "prediction", "opinion", "quote"]),
+          importance: z.enum(["high", "normal"]),
+          source_urls: z.array(z.string().url()).max(6).default([]),
+          conflicting: z.boolean().default(false),
+          notes: z.string().max(400).nullable().optional(),
+        }),
+      ),
     )
     .min(1)
     .max(25),
@@ -131,9 +162,9 @@ export function factCheckPrompt(c: { headline: string; summary: string; category
       `Reported development: ${c.summary}`,
       c.sourceUrls.length ? `Initial sources:\n- ${c.sourceUrls.join("\n- ")}` : "",
       "Search for the primary source and for independent corroboration. Then list the important claims a news article about this would make: names, dates, numbers, results, affiliations, platforms, prices, quotes.",
-      "For each claim give kind (fact, rumor, prediction, opinion, quote), importance (high for claims central to the story), source_urls (only URLs from your search results that directly support the claim), conflicting (true if sources disagree), notes (e.g. 'only reported by one outlet', 'date refers to JP release').",
+      "Each claim is an object with EXACTLY these keys: text (the claim as one self-contained sentence), kind (fact, rumor, prediction, opinion or quote), importance (high for claims central to the story, otherwise normal), source_urls (array of only URLs from your search results that directly support the claim), conflicting (true if sources disagree), notes (e.g. 'only reported by one outlet', 'date refers to JP release', or null).",
       "Quotes must be verbatim from a source and attributed in the claim text. Do not include claims you could not find support for unless you mark them with no source_urls.",
-      "Respond with ONLY a JSON object {\"claims\": [...], \"open_questions\": [...]}.",
+      'Respond with ONLY a JSON object, for example: {"claims": [{"text": "The update launches on October 30.", "kind": "fact", "importance": "high", "source_urls": ["https://example.com/announcement"], "conflicting": false, "notes": null}], "open_questions": []}',
     ]
       .filter(Boolean)
       .join("\n\n"),

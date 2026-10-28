@@ -3,17 +3,25 @@ import { isCategory } from "@/lib/editorial/categories";
 import { comparePost, DUPLICATE_THRESHOLD } from "@/lib/editorial/dedupe";
 import { assessEvidence } from "@/lib/editorial/evidence";
 import type { Check } from "@/lib/editorial/seo";
-import { shingles, stripHtml } from "@/lib/editorial/text";
+import { normalize, shingles, stripHtml } from "@/lib/editorial/text";
 import type { StageContext, StageResult } from "../context";
 import { StageError } from "../context";
 import { reviewJsonSchema, reviewPrompt, reviewSchema, type ReviewOutput } from "../prompts";
 import type { ClaimRecord } from "../types";
 
-/** Quoted passages (4+ words) in the article that do not appear in any verified quote claim. */
+/**
+ * Quoted passages (4+ words) in the article that the research did not record.
+ * A quote counts as recorded if it appears inside any usable claim (a tagline
+ * is often stated within a fact claim) or closely matches a recorded quote.
+ */
 export function unverifiedQuotes(bodyText: string, claims: ClaimRecord[]): string[] {
   const quotes = [...bodyText.matchAll(/[“"]([^”"]{12,400})[”"]/g)].map((m) => m[1]!.trim()).filter((q) => q.split(/\s+/).length >= 4);
-  const quoteClaims = claims.filter((c) => c.kind === "quote" && (c.status === "confirmed" || c.status === "primary_confirmed" || c.status === "single_source"));
+  const usable = claims.filter((c) => c.status === "confirmed" || c.status === "primary_confirmed" || c.status === "single_source");
+  const usableText = usable.map((c) => normalize(c.text));
+  const quoteClaims = usable.filter((c) => c.kind === "quote");
   return quotes.filter((q) => {
+    const nq = normalize(q);
+    if (nq && usableText.some((t) => t.includes(nq))) return false;
     const qs = shingles(q, 3);
     return !quoteClaims.some((c) => {
       const cs = shingles(c.text, 3);
@@ -76,7 +84,12 @@ export async function qualityStage(sc: StageContext): Promise<StageResult> {
   await sc.ensureModel(sc.models.text, "text");
 
   const bodyText = stripHtml(article.body_html);
-  const p = reviewPrompt({ headline: article.headline, bodyText }, claims.map((c) => ({ text: c.text, kind: c.kind, status: c.status })));
+  const sources = await deps.store.getCandidateSources(run.selected_candidate_id);
+  const p = reviewPrompt(
+    { headline: article.headline, bodyText },
+    claims.map((c) => ({ text: c.text, kind: c.kind, status: c.status })),
+    sources.map((x) => ({ title: x.title ?? x.domain, domain: x.domain, url: x.url })),
+  );
   const res = await sc.tracked("review", sc.models.text, article.id, () =>
     deps.ai.complete({ model: sc.models.text, system: p.system, prompt: p.prompt, temperature: 0, jsonSchema: { name: "review", schema: reviewJsonSchema } }),
   );

@@ -333,7 +333,11 @@ export const reviewJsonSchema = {
   },
 };
 
-export function reviewPrompt(a: { headline: string; bodyText: string }, claims: { text: string; kind: string; status: string }[]) {
+export function reviewPrompt(
+  a: { headline: string; bodyText: string },
+  claims: { text: string; kind: string; status: string }[],
+  sources: { title: string; domain: string; url: string }[] = [],
+) {
   return {
     system:
       "You are the copy chief. You review a draft strictly against the verified claim list. Be critical and concrete. " + UNTRUSTED_GUARD,
@@ -341,12 +345,15 @@ export function reviewPrompt(a: { headline: string; bodyText: string }, claims: 
       "VERIFIED CLAIM LIST:",
       ...claims.map((c, i) => `${i + 1}. (${c.kind}, ${c.status}) ${c.text}`),
       "",
+      "RESEARCHED SOURCES (the draft may attribute information to these outlets and link to these URLs; that is not an unsupported statement):",
+      ...(sources.length ? sources.map((x) => `- ${x.title} (${x.domain}) ${x.url}`) : ["(none)"]),
+      "",
       `HEADLINE: ${a.headline}`,
       "DRAFT:",
       a.bodyText.slice(0, 14000),
       "",
       "Score 0-1: accuracy (every factual statement traceable to the claim list), headline_accuracy, clarity, grammar, originality (insight beyond a rewrite), usefulness.",
-      "List unsupported_statements: factual statements not supported by the claim list (ignore clearly labelled analysis/opinion). List invented_quotes: quotation marks around words not in a 'quote' claim. List other issues.",
+      "List unsupported_statements: factual statements not supported by the claim list (ignore clearly labelled analysis/opinion, and ignore attribution to or links to the researched sources above). List invented_quotes: quotation marks around words not in a 'quote' claim. List other issues.",
       "Respond with JSON.",
     ].join("\n"),
   };

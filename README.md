@@ -47,7 +47,7 @@ The scheduler runs in the database, so nobody needs to open the dashboard. The d
 | Auth and data | Supabase Auth, Postgres, RLS, Storage, Vault | Auth, tenant isolation, job ledger, thumbnails and scheduler secrets on one platform |
 | Scheduler | Supabase Cron → signed HTTP tick | Vercel Hobby cron only runs once a day; Supabase Cron runs every 5 minutes on every plan |
 | AI | OpenRouter → Google models only | Per your instructions; `provider.only` pins requests to Google infrastructure with fallbacks off |
-| Hosting | Vercel (`sin1`, next to the Supabase `ap-southeast-1` project) | Git-based deploys; Fluid Compute allows a 300 s function duration |
+| Hosting | Vercel (`bom1` Mumbai, next to the Supabase `ap-south-1` project) | Git-based deploys; Fluid Compute allows a 300 s function duration |
 
 ### Durability and correctness
 
@@ -90,8 +90,8 @@ tests/                     84+ tests: pipeline (mocked), Postgres/RLS (PGlite), 
 
 ### 1. Supabase
 
-1. Use the existing **Content Engine** project (`wtzjpjfmtvandgauqabr`, ap-southeast-1) or create a new one. The existing project is currently **paused**: restore it from the Supabase dashboard first.
-2. Apply the migration: `supabase db push` with the Supabase CLI linked to the project, or paste `supabase/migrations/20261027000000_editorialos_init.sql` into the SQL editor.
+1. Production project: **EditorialOS** (`hulycdfkvjqjhusgvuqz`, ap-south-1 Mumbai). Its migrations and scheduler are already applied. For a fresh project, continue with step 2.
+2. Apply the migrations in order: `supabase db push` with the Supabase CLI linked to the project, or paste each file in `supabase/migrations/` into the SQL editor.
 3. In **Authentication → URL configuration**, set Site URL to your `APP_BASE_URL` and add `APP_BASE_URL/auth/callback` to the redirect URLs.
 4. Copy the project URL, the **publishable key** and the **secret key** from **Project Settings → API Keys**.
 

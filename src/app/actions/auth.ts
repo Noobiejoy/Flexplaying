@@ -63,12 +63,14 @@ export async function requestPasswordReset(fd: FormData) {
 }
 
 export async function updatePassword(fd: FormData) {
+  // Used by the reset page and by the profile page (signed-in password change).
+  const from = fd.get("from") === "/profile" ? "/profile" : "/reset-password";
   const pw = z.string().min(10).max(200).safeParse(fd.get("password"));
-  if (!pw.success) done("/reset-password", "err", "Password must be at least 10 characters");
-  if (fd.get("password") !== fd.get("confirm")) done("/reset-password", "err", "Passwords do not match");
+  if (!pw.success) done(from, "err", "Password must be at least 10 characters");
+  if (fd.get("password") !== fd.get("confirm")) done(from, "err", "Passwords do not match");
   const sb = await createUserClient();
   if (!sb) redirect("/setup");
   const { error } = await sb.auth.updateUser({ password: pw.data });
-  if (error) done("/reset-password", "err", "Could not update password. Request a new reset link.");
-  done("/overview", "ok", "Password updated");
+  if (error) done(from, "err", from === "/profile" ? "Could not update password. Sign out and use password reset instead." : "Could not update password. Request a new reset link.");
+  done(from === "/profile" ? "/profile" : "/overview", "ok", "Password updated");
 }

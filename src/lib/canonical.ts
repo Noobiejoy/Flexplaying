@@ -18,3 +18,18 @@ export function canonicalRedirect(url: URL, host: string | null, appBaseUrl: str
   to.searchParams.delete("_vercel_share");
   return to;
 }
+
+/**
+ * Supabase sends people to the Site URL (with `?code=`) when the requested
+ * redirect isn't on its allow-list. Route such a code to the callback so the
+ * sign-in isn't silently dropped by whatever page it landed on.
+ */
+export function strayAuthCode(url: URL): URL | null {
+  const code = url.searchParams.get("code");
+  if (!code || url.pathname.startsWith("/auth/") || url.pathname.startsWith("/api/")) return null;
+  const to = new URL("/auth/callback", url.origin);
+  to.searchParams.set("code", code);
+  const next = url.searchParams.get("next");
+  to.searchParams.set("next", next && next.startsWith("/") && !next.startsWith("//") ? next : url.pathname === "/" || url.pathname === "/login" ? "/overview" : url.pathname);
+  return to;
+}

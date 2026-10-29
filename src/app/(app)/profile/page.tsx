@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { updatePassword } from "@/app/actions/auth";
 import { updateProfile } from "@/app/actions/workspace";
 import { Flash } from "@/components/flash";
 import { Badge, Button, Card, Field, PageHeader } from "@/components/ui";
@@ -20,7 +21,14 @@ export default async function Profile({ searchParams }: { searchParams: Promise<
             <Field label="Display name"><input className="field" name="display_name" defaultValue={profile?.display_name ?? ""} maxLength={120} /></Field>
             <Button>Save</Button>
           </form>
-          <p className="mt-4 text-xs text-ink-3">To change your password, use <Link className="text-[var(--link)]" href="/forgot-password">password reset</Link>.</p>
+        </Card>
+        <Card title="Change password">
+          <form action={updatePassword} className="space-y-3">
+            <input type="hidden" name="from" value="/profile" />
+            <Field label="New password" hint="At least 10 characters"><input className="field" name="password" type="password" minLength={10} autoComplete="new-password" required /></Field>
+            <Field label="Confirm new password"><input className="field" name="confirm" type="password" minLength={10} autoComplete="new-password" required /></Field>
+            <Button>Update password</Button>
+          </form>
         </Card>
         <Card title="Workspaces">
           <ul className="space-y-2">{memberships.map((m) => <li key={m.workspace_id} className="flex items-center justify-between text-sm">{m.name}<Badge>{m.role}</Badge></li>)}</ul>

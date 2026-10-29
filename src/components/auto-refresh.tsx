@@ -11,5 +11,5 @@ export function AutoRefresh({ active, seconds = 10 }: { active: boolean; seconds
     const t = setInterval(() => router.refresh(), seconds * 1000);
     return () => clearInterval(t);
   }, [active, seconds, router]);
-  return active ? <span className="text-[11px] text-ink-3">Live · refreshing every {seconds}s</span> : null;
+  return active ? <span className="text-[12px] text-ink-3">Live · refreshing every {seconds}s</span> : null;
 }

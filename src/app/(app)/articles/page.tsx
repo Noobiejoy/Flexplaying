@@ -1,7 +1,9 @@
+/* eslint-disable @next/next/no-img-element */
 import Link from "next/link";
-import { Badge, Card, ExternalLink, PageHeader, RunStatus, Score, Table } from "@/components/ui";
+import { CategoryTag, Empty, ExternalLink, PageHeader, RunStatus, Score, categoryColor, statusLabel } from "@/components/ui";
 import { currentWorkspace } from "@/lib/auth/session";
 import { formatInZone } from "@/lib/dashboard/time";
+import { adminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
 
@@ -34,37 +36,66 @@ export default async function Articles({ searchParams }: { searchParams: Promise
   if (q) query = query.ilike("headline", `%${q}%`);
   const { data } = await query;
   const rows = data ?? [];
+  // Thumbnails live in a private bucket: sign short-lived URLs for this workspace's own rows (membership verified above).
+  const thumbs = new Map<string, string>();
+  if (rows.length) {
+    const { data: imgs } = await sb.from("article_images").select("article_id,storage_path").in("article_id", rows.map((r) => r.id));
+    const paths = (imgs ?? []).filter((i) => i.storage_path);
+    if (paths.length) {
+      const { data: signed } = await adminClient().storage.from("thumbnails").createSignedUrls(paths.map((i) => i.storage_path as string), 600);
+      for (const sgn of signed ?? []) {
+        const img = paths.find((i) => i.storage_path === sgn.path);
+        if (img && sgn.signedUrl) thumbs.set(img.article_id, sgn.signedUrl);
+      }
+    }
+  }
+  const filtered = q || cat !== "all" || status !== "all" || mode !== "all" || wp !== "all" || minQ > 0 || from || to;
+  const label = (v: string) => statusLabel(v).replace(/^./, (c) => c.toUpperCase());
 
   return (
     <>
-      <PageHeader title="Article library" description="Everything the agent has written, with its WordPress state." />
-      <form className="mb-4 flex flex-wrap items-end gap-2" action="/articles">
-        <input className="field !w-56" name="q" placeholder="Search headlines" defaultValue={q} />
-        <select className="field !w-auto" name="category" defaultValue={cat}>{["all", "anime", "gaming", "esports"].map((c) => <option key={c}>{c}</option>)}</select>
-        <select className="field !w-auto" name="status" defaultValue={status}>{STATUSES.map((s) => <option key={s} value={s}>{s.replace("_", " ")}</option>)}</select>
-        <select className="field !w-auto" name="mode" defaultValue={mode}>{["all", "dry_run", "draft_only", "auto_publish"].map((s) => <option key={s} value={s}>{s.replace("_", " ")}</option>)}</select>
-        <select className="field !w-auto" name="wp" defaultValue={wp}><option value="all">any WordPress state</option><option value="synced">on WordPress</option><option value="local">not on WordPress</option></select>
-        <input className="field !w-28" name="min_quality" type="number" step="0.05" min="0" max="1" placeholder="min quality" defaultValue={sp.min_quality ?? ""} />
-        <input className="field !w-auto" type="date" name="from" defaultValue={from} aria-label="From date" />
-        <input className="field !w-auto" type="date" name="to" defaultValue={to} aria-label="To date" />
-        <button className="glass-strong rounded-full px-3.5 py-1.5 text-sm">Filter</button>
+      <PageHeader title="Articles" description="Everything the desk has written, and where each piece stands on WordPress." />
+      <form className="mb-6 flex flex-wrap items-center gap-2" action="/articles" role="search">
+        <input className="field !w-full sm:!w-64" name="q" placeholder="Search headlines" defaultValue={q} aria-label="Search headlines" />
+        <select className="field !w-auto" name="category" defaultValue={cat} aria-label="Category">{["all", "anime", "gaming", "esports"].map((c) => <option key={c} value={c}>{c === "all" ? "All categories" : label(c)}</option>)}</select>
+        <select className="field !w-auto" name="status" defaultValue={status} aria-label="Status">{STATUSES.map((s) => <option key={s} value={s}>{s === "all" ? "Any status" : label(s)}</option>)}</select>
+        <select className="field !w-auto" name="mode" defaultValue={mode} aria-label="Publishing mode">{["all", "dry_run", "draft_only", "auto_publish"].map((s) => <option key={s} value={s}>{s === "all" ? "Any mode" : label(s)}</option>)}</select>
+        <select className="field !w-auto" name="wp" defaultValue={wp} aria-label="WordPress state"><option value="all">Any WordPress state</option><option value="synced">On WordPress</option><option value="local">Not on WordPress</option></select>
+        <details className="group">
+          <summary className="cursor-pointer list-none rounded-lg px-2 py-2 text-[13px] font-medium text-ink-2 hover:text-ink">More filters</summary>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <input className="field !w-32" name="min_quality" type="number" step="0.05" min="0" max="1" placeholder="Min quality" aria-label="Minimum quality score" defaultValue={sp.min_quality ?? ""} />
+            <input className="field !w-auto" type="date" name="from" defaultValue={from} aria-label="From date" />
+            <input className="field !w-auto" type="date" name="to" defaultValue={to} aria-label="To date" />
+          </div>
+        </details>
+        <button className="rounded-lg border border-[var(--rule-strong)] bg-[var(--surface)] px-3.5 py-2 text-[14px] font-medium hover:bg-[var(--sunken)]">Apply filters</button>
       </form>
-      <Card>
-        <Table head={["Headline", "Category", "Status", "Mode", "Quality", "Words", "Created", "WordPress"]} empty={rows.length === 0}>
-          {rows.map((a) => (
-            <tr key={a.id}>
-              <td className="max-w-[360px]"><Link href={`/articles/${a.id}`} className="font-medium text-[var(--accent)]">{a.headline}</Link></td>
-              <td><Badge>{a.category}</Badge></td>
-              <td><RunStatus status={a.status} /></td>
-              <td className="text-xs text-ink-2">{a.publishing_mode.replace("_", " ")}</td>
-              <td><Score value={a.quality_score === null ? null : Number(a.quality_score)} /></td>
-              <td className="text-xs tabular-nums text-ink-2">{a.word_count}</td>
-              <td className="text-xs text-ink-2">{formatInZone(a.created_at, tz)}</td>
-              <td className="text-xs">{a.wp_url ? <ExternalLink href={a.wp_url}>#{a.wp_post_id} ↗</ExternalLink> : <span className="text-ink-3">—</span>}</td>
-            </tr>
-          ))}
-        </Table>
-      </Card>
+      {rows.length === 0 ? (
+        <Empty title={filtered ? "No articles match these filters" : "No articles yet"}>{filtered ? "Clear a filter to see more." : "Articles appear here after a run gets through writing. Start a dry run from the Runs page."}</Empty>
+      ) : (
+        <ol className="panel divide-y divide-[var(--rule)] rounded-xl">
+          {rows.map((a) => {
+            const thumb = thumbs.get(a.id);
+            return (
+              <li key={a.id} className="grid grid-cols-[96px_minmax(0,1fr)] gap-4 p-4 sm:grid-cols-[152px_minmax(0,1fr)_auto] sm:items-center sm:px-5">
+                <Link href={`/articles/${a.id}`} tabIndex={-1} aria-hidden className="block aspect-video overflow-hidden rounded-lg bg-[var(--sunken)]" style={thumb ? undefined : { boxShadow: `inset 0 -3px 0 ${categoryColor(a.category)}` }}>
+                  {thumb && <img src={thumb} alt="" className="h-full w-full object-cover" loading="lazy" />}
+                </Link>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1"><CategoryTag category={a.category} /><RunStatus status={a.status} /></div>
+                  <Link href={`/articles/${a.id}`} className="mt-1 line-clamp-2 block text-[16px] font-semibold leading-snug text-ink hover:underline">{a.headline}</Link>
+                  <div className="mt-1 text-[12px] text-ink-3">{formatInZone(a.created_at, tz)}, {a.word_count} words, {statusLabel(a.publishing_mode)}</div>
+                </div>
+                <div className="col-span-2 flex items-center gap-5 sm:col-span-1 sm:flex-col sm:items-end sm:gap-1.5">
+                  <Score value={a.quality_score === null ? null : Number(a.quality_score)} />
+                  <span className="text-[13px]">{a.wp_url ? <ExternalLink href={a.wp_url}>Post {a.wp_post_id}</ExternalLink> : <span className="text-ink-3">Not on WordPress</span>}</span>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      )}
     </>
   );
 }

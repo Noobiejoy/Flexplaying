@@ -10,9 +10,9 @@ export default async function Onboarding({ searchParams }: { searchParams: Promi
   const { user } = await requireUser();
   return (
     <main className="flex min-h-screen items-center justify-center px-4 py-12">
-      <div className="glass w-full max-w-md rounded-3xl p-6">
-        <h1 className="text-lg font-semibold">Create a workspace</h1>
-        <p className="mt-1 text-sm text-ink-2">A workspace holds one WordPress site, its schedule, articles, research history and costs. Signed in as {user.email}.</p>
+      <div className="panel w-full max-w-md rounded-xl p-7">
+        <h1 className="display text-[32px]">Create a workspace</h1>
+        <p className="mt-2 text-[14px] text-ink-2">A workspace holds one WordPress site, its schedule, articles, research history and costs. Signed in as {user.email}.</p>
         <div className="mt-4"><Flash searchParams={searchParams} /></div>
         <form action={createWorkspace} className="mt-2 space-y-3">
           <Field label="Workspace name"><input className="field" name="name" defaultValue="FlexPlaying" required maxLength={80} /></Field>

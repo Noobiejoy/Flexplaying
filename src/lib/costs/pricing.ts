@@ -52,5 +52,6 @@ function round6(v: number) {
 
 export function formatUsd(v: number | null | undefined, digits = 4): string {
   if (v === null || v === undefined) return "—";
+  if (v === 0) return "$0.00";
   return `$${v.toFixed(v >= 1 ? 2 : digits)}`;
 }

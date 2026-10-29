@@ -17,22 +17,22 @@ export default function SetupPage() {
   const h = integrationHealth();
   return (
     <main className="mx-auto max-w-2xl px-4 py-12">
-      <div className="glass rounded-3xl p-6">
-        <h1 className="text-xl font-semibold">Setup checklist</h1>
-        <p className="mt-1 text-sm text-ink-2">Each item shows only whether a value is present. Values are never displayed. See README.md → Setup for step-by-step instructions.</p>
-        <ul className="mt-5 divide-y divide-[var(--hairline)]">
+      <div className="panel rounded-xl p-7">
+        <h1 className="display text-[32px]">Setup checklist</h1>
+        <p className="mt-2 text-[14px] text-ink-2">Each item shows only whether a value is present. Values are never displayed. See README.md → Setup for step-by-step instructions.</p>
+        <ul className="mt-5 divide-y divide-[var(--sunken)]">
           {ROWS.map((r) => (
             <li key={r.key} className="flex items-start justify-between gap-4 py-3">
               <div>
                 <div className="text-sm font-medium">{r.why}</div>
-                <code className="text-[11px] text-ink-3">{r.vars}</code>
-                <div className="text-[11px] text-ink-3">Set in: {r.where}</div>
+                <code className="text-[12px] text-ink-3">{r.vars}</code>
+                <div className="text-[12px] text-ink-3">Set in: {r.where}</div>
               </div>
               <Badge tone={h[r.key] ? "good" : "warn"} icon>{h[r.key] ? "configured" : "missing"}</Badge>
             </li>
           ))}
         </ul>
-        {h.supabase && <a href="/login" className="mt-5 inline-block text-sm text-[var(--accent)]">Continue to sign in →</a>}
+        {h.supabase && <a href="/login" className="mt-5 inline-block text-sm text-[var(--link)]">Continue to sign in </a>}
       </div>
     </main>
   );

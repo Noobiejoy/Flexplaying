@@ -1,7 +1,7 @@
 import { savePricing } from "@/app/actions/settings";
 import { BarChart, HBars } from "@/components/charts";
 import { Flash } from "@/components/flash";
-import { Badge, Button, Card, Empty, Field, Notice, PageHeader, Stat, Table } from "@/components/ui";
+import { Badge, Button, Card, Empty, Field, Notice, PageHeader, Stat, StatStrip, Table } from "@/components/ui";
 import { currentWorkspace } from "@/lib/auth/session";
 import { formatUsd } from "@/lib/costs/pricing";
 import { addDays, formatLocalDate, localDateOf, startOfLocalDay, startOfLocalMonth } from "@/lib/schedule/slots";
@@ -40,12 +40,12 @@ export default async function Costs({ searchParams }: { searchParams: Promise<Re
     const d = formatLocalDate(addDays(startDay, i));
     const rows = u.filter((r) => formatLocalDate(localDateOf(new Date(r.created_at), tz)) === d);
     const v = sum(rows);
-    days.push({ label: d.slice(5), value: rows.length ? v : null, display: rows.length ? `${formatUsd(v)} · ${rows.length} calls${unknown(rows) ? ` (${unknown(rows)} unknown)` : ""}` : "no usage" });
+    days.push({ label: d.slice(5), value: rows.length ? v : null, display: rows.length ? `${formatUsd(v)}, ${rows.length} calls${unknown(rows) ? ` (${unknown(rows)} unknown)` : ""}` : "no usage" });
   }
   const group = (key: keyof U, label: (k: string) => string = (k) => k) => {
     const m = new Map<string, U[]>();
     for (const r of u) m.set(String(r[key]), [...(m.get(String(r[key])) ?? []), r]);
-    return [...m.entries()].map(([k, rows]) => ({ label: label(k), value: sum(rows), display: `${formatUsd(sum(rows))} · ${rows.length}${unknown(rows) ? ` (${unknown(rows)} unknown)` : ""}`, rows })).sort((a, b) => b.value - a.value);
+    return [...m.entries()].map(([k, rows]) => ({ label: label(k), value: sum(rows), display: `${formatUsd(sum(rows))}, ${rows.length} call${rows.length === 1 ? "" : "s"}${unknown(rows) ? ` (${unknown(rows)} unknown)` : ""}`, rows })).sort((a, b) => b.value - a.value);
   };
   const byAction = group("action", (k) => ACTION_LABEL[k] ?? k);
   const byModel = group("model");
@@ -56,31 +56,34 @@ export default async function Costs({ searchParams }: { searchParams: Promise<Re
 
   return (
     <>
-      <PageHeader title="Costs & usage" description="AI usage recorded for every call. Costs come from OpenRouter's response when it reports them; otherwise they're estimated from your pricing table, or marked unknown." />
+      <PageHeader title="Costs" description="What every AI call cost. Figures come from OpenRouter when it reports them, from your pricing table when it doesn't, and are marked unknown otherwise." />
       <Flash searchParams={searchParams} />
-      <div className="mb-4"><Notice>All workspaces share the server&apos;s OpenRouter key, so every charge goes to that key&apos;s owner. If your own Google key is attached in OpenRouter (BYOK), Google bills it directly and OpenRouter reports $0 itself; this page adds the provider cost back in. This page breaks usage down by workspace for visibility only. It does not create separate billing accounts.</Notice></div>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <details className="mb-6 text-[13px] text-ink-2">
+        <summary className="cursor-pointer font-medium text-ink-2 hover:text-ink">Who pays for this?</summary>
+        <div className="mt-2"><Notice>All workspaces share the server&apos;s OpenRouter key, so every charge goes to that key&apos;s owner. If your own Google key is attached in OpenRouter (BYOK), Google bills it directly and OpenRouter reports $0 itself; this page adds the provider cost back in. This page breaks usage down by workspace for visibility only. It does not create separate billing accounts.</Notice></div>
+      </details>
+      <StatStrip>
         <Stat label="Today" value={formatUsd(sum(u.filter((r) => r.created_at >= today)))} hint={`${unknown(u.filter((r) => r.created_at >= today))} call(s) with unknown cost`} />
         <Stat label="This month" value={formatUsd(sum(u.filter((r) => r.created_at >= month)))} hint={`${unknown(u.filter((r) => r.created_at >= month))} call(s) with unknown cost`} />
         <Stat label="Per published article (30d)" value={published ? formatUsd(total30 / published) : "—"} hint={`${published} published`} />
         <Stat label="Per article produced (30d)" value={produced ? formatUsd(total30 / produced) : "—"} hint={`${produced} published, drafted or held for review`} />
-      </div>
-      <div className="mt-4 grid gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-2" title="Daily spend (last 30 days)" subtitle={`${u.length} calls · ${providerReported} with provider-reported cost`}>
+      </StatStrip>
+      <div className="mt-6 grid gap-6 lg:grid-cols-3">
+        <Card className="lg:col-span-2" title="Daily spend, last 30 days" subtitle={`${u.length} calls, ${providerReported} with a cost reported by OpenRouter`}>
           {u.length ? <BarChart data={days} title="Daily AI spend" /> : <Empty title="No usage recorded yet" />}
         </Card>
         <Card title="Retries and failed attempts">
-          <div className="text-2xl font-semibold tabular-nums">{formatUsd(sum(retries))}</div>
-          <p className="text-xs text-ink-3">{retries.length} call(s) were retries or failed. These are included in the totals.</p>
+          <div className="figure text-[32px]">{formatUsd(sum(retries))}</div>
+          <p className="mt-2 text-[13px] text-ink-3">{retries.length} call(s) were retries or failed. These are included in the totals.</p>
         </Card>
         <Card title="By action" className="lg:col-span-2">{byAction.length ? <HBars data={byAction} /> : <Empty title="No data" />}</Card>
         <Card title="By model">{byModel.length ? <HBars data={byModel} /> : <Empty title="No data" />}</Card>
       </div>
-      <Card title="Token usage by model (30 days)" className="mt-4">
+      <Card title="Token usage by model, last 30 days" className="mt-6">
         <Table head={["Model", "Calls", "Input tokens", "Output tokens", "Web searches", "Images", "Cost", "Unknown cost"]} empty={byModel.length === 0}>
           {byModel.map((g) => (
             <tr key={g.label}>
-              <td className="font-mono text-xs">{g.label}</td>
+              <td className="font-mono text-[12px]">{g.label}</td>
               <td className="tabular-nums">{g.rows.length}</td>
               <td className="tabular-nums">{g.rows.reduce((s, r) => s + (r.input_tokens ?? 0), 0).toLocaleString()}</td>
               <td className="tabular-nums">{g.rows.reduce((s, r) => s + (r.output_tokens ?? 0), 0).toLocaleString()}</td>
@@ -92,8 +95,8 @@ export default async function Costs({ searchParams }: { searchParams: Promise<Re
           ))}
         </Table>
       </Card>
-      <div id="pricing" className="mt-4 grid gap-4 lg:grid-cols-2">
-        <Card title="Pricing table (fallback estimates)" subtitle="Versioned. Used only when OpenRouter does not report a cost. Check prices at openrouter.ai/models.">
+      <div id="pricing" className="mt-6 grid gap-6 lg:grid-cols-2">
+        <Card title="Fallback pricing" subtitle="Used only when OpenRouter doesn't report a cost. Each save adds a version. Check current prices at openrouter.ai/models.">
           {(pricing ?? []).length === 0 ? <Empty title="No pricing entered">Without pricing, calls that don&apos;t report a cost show as unknown. That&apos;s intentional: the app never guesses prices.</Empty> : (
             <Table head={["Model", "v", "In / Mtok", "Out / Mtok", "Search", "Image", "Note"]}>
               {(pricing ?? []).map((p) => (
@@ -103,7 +106,7 @@ export default async function Costs({ searchParams }: { searchParams: Promise<Re
           )}
         </Card>
         {membership.role === "owner" && (
-          <Card title="Add pricing version">
+          <Card title="Add a pricing version">
             <form action={savePricing} className="grid grid-cols-2 gap-3">
               <input type="hidden" name="workspace_id" value={ws} />
               <div className="col-span-2"><Field label="Model"><select className="field" name="model">{models.map((m) => <option key={m}>{m}</option>)}</select></Field></div>

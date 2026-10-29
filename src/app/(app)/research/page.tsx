@@ -1,7 +1,6 @@
-import Link from "next/link";
 import { submitFeedback } from "@/app/actions/feedback";
 import { Flash } from "@/components/flash";
-import { Badge, Card, Empty, ExternalLink, PageHeader, RunStatus, Score } from "@/components/ui";
+import { CategoryTag, Empty, ExternalLink, PageHeader, RunStatus, TextLink, categoryColor, statusLabel } from "@/components/ui";
 import { currentWorkspace } from "@/lib/auth/session";
 import { ago } from "@/lib/dashboard/time";
 
@@ -45,66 +44,84 @@ export default async function Research({ searchParams }: { searchParams: Promise
   const back = `/research?category=${cat}&status=${status}${q ? `&q=${encodeURIComponent(q)}` : ""}`;
   const canEdit = membership.role !== "viewer";
 
+  const scoreParts = [["recency", "Recency"], ["source_quality", "Sources"], ["relevance", "Relevance"], ["originality", "Originality"], ["corroboration", "Corroboration"]] as const;
+  const tierColor = (t: string) => (t === "official" ? "var(--good)" : t === "established" ? "var(--ink-2)" : "var(--ink-3)");
+
   return (
     <>
-      <PageHeader title="Research & topic intelligence" description="Every story the agent discovered, how it scored, and why it was selected or rejected. Your feedback adjusts future scoring (see Learning)." />
+      <PageHeader title="Research" description="Every story the desk found, how it scored, and why it was picked or passed over. Your verdicts tune future scoring on the Learning page." />
       <Flash searchParams={searchParams} />
-      <form className="mb-4 flex flex-wrap items-end gap-2" action="/research">
-        <input className="field !w-64" name="q" placeholder="Search headlines" defaultValue={q} />
-        <select className="field !w-auto" name="category" defaultValue={cat}>{["all", "anime", "gaming", "esports"].map((c) => <option key={c}>{c}</option>)}</select>
-        <select className="field !w-auto" name="status" defaultValue={status}>{STATUSES.map((s) => <option key={s} value={s}>{s.replace(/_/g, " ")}</option>)}</select>
-        <button className="glass-strong rounded-full px-3.5 py-1.5 text-sm">Filter</button>
+      <form className="mb-6 flex flex-wrap items-center gap-2" action="/research" role="search">
+        <input className="field !w-full sm:!w-72" name="q" placeholder="Search headlines" defaultValue={q} aria-label="Search headlines" />
+        <select className="field !w-auto" name="category" defaultValue={cat} aria-label="Category">{["all", "anime", "gaming", "esports"].map((c) => <option key={c} value={c}>{c === "all" ? "All categories" : c[0]!.toUpperCase() + c.slice(1)}</option>)}</select>
+        <select className="field !w-auto" name="status" defaultValue={status} aria-label="Outcome">{STATUSES.map((s) => <option key={s} value={s}>{s === "all" ? "All outcomes" : statusLabel(s)}</option>)}</select>
+        <button className="rounded-lg border border-[var(--rule-strong)] bg-[var(--surface)] px-3.5 py-2 text-[14px] font-medium hover:bg-[var(--sunken)]">Apply filters</button>
       </form>
       {rows.length === 0 ? (
-        <Card><Empty title="No topics yet">Topics appear after the first research stage runs.</Empty></Card>
+        <Empty title={q || cat !== "all" || status !== "all" ? "No stories match these filters" : "No stories yet"}>{q || cat !== "all" || status !== "all" ? "Clear a filter to see more." : "Stories appear after the first research stage runs."}</Empty>
       ) : (
-        <div className="grid gap-3 xl:grid-cols-2">
+        <ol className="space-y-3">
           {rows.map((c) => {
             const mine = c.topic_feedback.find((f) => f.user_id === user.id)?.verdict;
-            const s = c.scores ?? {};
+            const sc = c.scores ?? {};
+            const srcs = c.candidate_sources.filter((x) => x.sources);
             return (
-              <Card key={c.id}>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="mb-1 flex flex-wrap items-center gap-1.5"><Badge>{c.category}</Badge><RunStatus status={c.status} /><span className="text-[11px] text-ink-3">found {ago(c.created_at)} · newest source {ago(c.latest_source_at)}</span></div>
-                    <h3 className="text-[15px] font-semibold leading-snug">{c.headline}</h3>
-                    <p className="mt-1 text-sm text-ink-2">{c.summary}</p>
+              <li key={c.id} className="panel overflow-hidden rounded-xl" style={{ boxShadow: `inset 3px 0 0 ${categoryColor(c.category)}` }}>
+                <div className="grid gap-5 p-5 md:grid-cols-[88px_minmax(0,1fr)_220px]">
+                  <div className="flex items-baseline gap-3 md:block">
+                    <div className="figure text-[34px]" title="Overall score, 0 to 1">{c.overall_score === null ? "—" : Number(c.overall_score).toFixed(2)}</div>
+                    <div className="text-[12px] text-ink-3 md:mt-1">overall score</div>
                   </div>
-                  <Score value={c.overall_score === null ? null : Number(c.overall_score)} />
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1"><CategoryTag category={c.category} /><RunStatus status={c.status} /><span className="text-[12px] text-ink-3">Found {ago(c.created_at)}, newest source {ago(c.latest_source_at)}</span></div>
+                    <h3 className="mt-1.5 text-[17px] font-semibold leading-snug text-ink">{c.headline}</h3>
+                    <p className="mt-1 text-[14px] text-ink-2">{c.summary}</p>
+                    {c.decision_reason && <p className="mt-3 text-[13px] text-ink-2"><span className="font-semibold text-ink">Decision.</span> {c.decision_reason}</p>}
+                    {c.duplicate_of?.title && (
+                      <p className="mt-1 text-[13px] text-ink-2"><span className="font-semibold text-ink">Already on your site.</span> {c.duplicate_of.link ? <ExternalLink href={c.duplicate_of.link}>{c.duplicate_of.title}</ExternalLink> : c.duplicate_of.title}{c.duplicate_of.score !== undefined && ` (similarity ${c.duplicate_of.score})`}</p>
+                    )}
+                    {srcs.length > 0 && (
+                      <details className="mt-3">
+                        <summary className="cursor-pointer text-[13px] font-medium text-ink-2 hover:text-ink">{srcs.length} source{srcs.length > 1 ? "s" : ""}</summary>
+                        <ul className="mt-2 space-y-1 text-[13px]">
+                          {srcs.slice(0, 8).map((x) => (
+                            <li key={x.sources!.url} className="flex min-w-0 items-baseline gap-2"><span className="w-[74px] shrink-0 text-[12px]" style={{ color: tierColor(x.sources!.quality_tier) }}>{x.sources!.quality_tier}</span><span className="truncate"><ExternalLink href={x.sources!.url}>{x.sources!.title ?? x.sources!.domain}</ExternalLink></span></li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
+                  </div>
+                  <dl className="space-y-1.5 self-start text-[12px]">
+                    {scoreParts.map(([k, label]) => {
+                      const v = typeof sc[k] === "number" ? (sc[k] as number) : null;
+                      return (
+                        <div key={k} className="grid grid-cols-[84px_minmax(0,1fr)_32px] items-center gap-2">
+                          <dt className="text-ink-3">{label}</dt>
+                          <dd className="h-1.5 overflow-hidden rounded-full bg-[var(--sunken)]"><span className="block h-full rounded-full bg-[var(--ink-2)]" style={{ width: `${v === null ? 0 : Math.max(3, v * 100)}%` }} /></dd>
+                          <dd className="text-right tabular-nums text-ink">{v === null ? "—" : v.toFixed(2)}</dd>
+                        </div>
+                      );
+                    })}
+                  </dl>
                 </div>
-                <div className="mt-3 grid grid-cols-5 gap-1.5 text-center text-[10px] text-ink-3">
-                  {(["recency", "source_quality", "relevance", "originality", "corroboration"] as const).map((k) => (
-                    <div key={k} className="rounded-lg bg-[var(--hairline)] px-1 py-1.5"><div className="text-[13px] font-semibold tabular-nums text-ink">{typeof s[k] === "number" ? (s[k] as number).toFixed(2) : "—"}</div>{k.replace("_", " ")}</div>
-                  ))}
-                </div>
-                {c.decision_reason && <p className="mt-3 text-xs text-ink-2"><span className="font-medium text-ink">Decision:</span> {c.decision_reason}</p>}
-                {c.duplicate_of?.title && (
-                  <p className="mt-1 text-xs text-ink-2"><span className="font-medium text-ink">Matched existing:</span> {c.duplicate_of.link ? <ExternalLink href={c.duplicate_of.link}>{c.duplicate_of.title}</ExternalLink> : c.duplicate_of.title} {c.duplicate_of.score !== undefined && `(similarity ${c.duplicate_of.score})`}</p>
-                )}
-                {c.candidate_sources.length > 0 && (
-                  <ul className="mt-2 space-y-0.5 text-xs">
-                    {c.candidate_sources.filter((x) => x.sources).slice(0, 6).map((x) => (
-                      <li key={x.sources!.url} className="flex items-center gap-1.5 truncate"><Badge tone={x.sources!.quality_tier === "official" ? "good" : x.sources!.quality_tier === "established" ? "info" : "neutral"}>{x.sources!.quality_tier}</Badge><ExternalLink href={x.sources!.url}>{x.sources!.title ?? x.sources!.domain}</ExternalLink></li>
-                    ))}
-                  </ul>
-                )}
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                  <Link href={`/activity/${c.run_id}`} className="text-[11px] text-[var(--accent)]">Run trace →</Link>
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--rule)] bg-[var(--surface-2)] px-5 py-2.5">
+                  <TextLink href={`/activity/${c.run_id}`} className="text-[13px]">Open run trace</TextLink>
                   {canEdit && (
-                    <form action={submitFeedback} className="flex flex-wrap gap-1">
+                    <form action={submitFeedback} className="flex flex-wrap items-center gap-1">
+                      <span className="mr-1 text-[12px] text-ink-3">Your verdict</span>
                       <input type="hidden" name="workspace_id" value={ws} />
                       <input type="hidden" name="candidate_id" value={c.id} />
                       <input type="hidden" name="back" value={back} />
                       {VERDICTS.map((v) => (
-                        <button key={v.v} name="verdict" value={v.v} className={`rounded-full px-2.5 py-1 text-[11px] ${mine === v.v ? "bg-[var(--accent)] text-white" : "bg-[var(--hairline)] text-ink-2 hover:text-ink"}`}>{v.label}</button>
+                        <button key={v.v} name="verdict" value={v.v} aria-pressed={mine === v.v} className={`rounded-md px-2.5 py-1 text-[12px] font-medium ${mine === v.v ? "bg-[var(--ink)] text-[var(--on-ink)]" : "border border-[var(--rule)] bg-[var(--surface)] text-ink-2 hover:text-ink"}`}>{v.label}</button>
                       ))}
                     </form>
                   )}
                 </div>
-              </Card>
+              </li>
             );
           })}
-        </div>
+        </ol>
       )}
     </>
   );

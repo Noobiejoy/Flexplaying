@@ -33,8 +33,8 @@ export function BarChart({ data, title, height = 160 }: { data: BarDatum[]; titl
                   style={{ height: `${h}%`, background: "var(--series-1)", opacity: hover === null || hover === i ? 1 : 0.45 }}
                 />
                 {hover === i && (
-                  <div className="glass-strong pointer-events-none absolute bottom-full z-10 mb-1 whitespace-nowrap rounded-lg px-2 py-1 text-[11px] text-ink shadow">
-                    <div className="text-ink-3">{d.label}</div>
+                  <div className="pointer-events-none absolute bottom-full z-10 mb-1 whitespace-nowrap rounded-md bg-[var(--ink)] px-2 py-1 text-[12px] text-[var(--on-ink)]">
+                    <div className="opacity-70">{d.label}</div>
                     <div className="font-semibold tabular-nums">{d.display}</div>
                   </div>
                 )}
@@ -43,7 +43,7 @@ export function BarChart({ data, title, height = 160 }: { data: BarDatum[]; titl
           })}
         </div>
       </div>
-      <div className="mt-1.5 flex justify-between text-[10px] text-ink-3">
+      <div className="mt-1.5 flex justify-between text-[12px] text-ink-3">
         <span>{data[0]?.label}</span>
         <span>{data.at(-1)?.label}</span>
       </div>
@@ -69,11 +69,11 @@ export function HBars({ data }: { data: { label: string; value: number; display:
     <ul className="space-y-2.5">
       {data.map((d) => (
         <li key={d.label} title={`${d.label}: ${d.display}`}>
-          <div className="mb-1 flex justify-between text-xs">
+          <div className="mb-1 flex justify-between gap-3 text-[13px]">
             <span className="text-ink-2">{d.label}</span>
             <span className="font-medium tabular-nums text-ink">{d.display}</span>
           </div>
-          <div className="h-2 rounded-full bg-[var(--hairline)]">
+          <div className="h-2 rounded-full bg-[var(--sunken)]">
             <div className="h-2 rounded-full" style={{ width: `${max > 0 ? Math.max(2, (d.value / max) * 100) : 0}%`, background: "var(--series-1)" }} />
           </div>
         </li>

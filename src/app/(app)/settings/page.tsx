@@ -65,20 +65,28 @@ export default async function Settings({ searchParams }: { searchParams: Promise
 
   return (
     <>
-      <PageHeader title="Settings & integrations" description={isOwner ? "Only owners can change these settings. Every change is checked on the server and enforced by database policies." : "You can view these settings. Changing them requires the owner role."} />
+      <PageHeader title="Settings" description={isOwner ? "Only owners can change these. Every change is checked on the server and enforced by database policies." : "You can view these settings. Changing them needs the owner role."} />
       <Flash searchParams={searchParams} />
-      <div className="space-y-4">
-        <Section id="health" title="Integration health">
+      <div className="lg:grid lg:grid-cols-[180px_minmax(0,1fr)] lg:gap-8">
+      <nav aria-label="Settings sections" className="hidden lg:block">
+        <ul className="sticky top-8 space-y-0.5 text-[14px]">
+          {[["health", "Health"], ["general", "Workspace"], ["schedule", "Schedule"], ["publishing", "Publishing mode"], ["editorial", "Editorial rules"], ["wordpress", "WordPress"], ["models", "AI models"], ["notifications", "Notifications"], ["members", "Members"]].map(([id, label]) => (
+            <li key={id}><a href={`#${id}`} className="block rounded-md px-2.5 py-1.5 text-ink-2 hover:bg-[var(--sunken)] hover:text-ink">{label}</a></li>
+          ))}
+        </ul>
+      </nav>
+      <div className="min-w-0 space-y-6">
+        <Section id="health" title="Health">
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             {[
               { name: "Database", ok: dbOk && health.supabaseServer, detail: dbOk ? "Supabase reachable" : "Server key missing or database unreachable" },
-              { name: "WordPress", ok: conn?.status === "ok" && hasSecret, detail: conn ? `${conn.status} · tested ${ago(conn.last_tested_at)}${conn.last_error ? ` · ${conn.last_error}` : ""}` : "Not connected" },
-              { name: "OpenRouter (Google models)", ok: health.openrouter, detail: health.openrouter ? `Key configured · text ${e.OPENROUTER_TEXT_MODEL}` : "OPENROUTER_API_KEY missing" },
+              { name: "WordPress", ok: conn?.status === "ok" && hasSecret, detail: conn ? `${conn.status}, tested ${ago(conn.last_tested_at)}${conn.last_error ? `. ${conn.last_error}` : ""}` : "Not connected" },
+              { name: "OpenRouter (Google models)", ok: health.openrouter, detail: health.openrouter ? `Key configured. Text model ${e.OPENROUTER_TEXT_MODEL}` : "OPENROUTER_API_KEY missing" },
               { name: "Scheduler", ok: health.scheduler && tickHealthy, detail: !health.scheduler ? "CRON_SECRET missing" : lastTick ? `Last signed tick ${ago(lastTick)}` : "No tick received yet. Set up Supabase Cron (README)" },
             ].map((h) => (
-              <div key={h.name} className="rounded-xl bg-[var(--hairline)] p-3">
-                <div className="flex items-center justify-between"><span className="text-sm font-medium">{h.name}</span><Badge tone={h.ok ? "good" : "warn"} icon>{h.ok ? "healthy" : "attention"}</Badge></div>
-                <p className="mt-1 text-[11px] text-ink-3">{h.detail}</p>
+              <div key={h.name} className="rounded-lg border border-[var(--rule)] p-3.5" style={{ boxShadow: `inset 3px 0 0 ${h.ok ? "var(--good)" : "var(--warn)"}` }}>
+                <div className="flex items-center justify-between"><span className="text-sm font-medium">{h.name}</span><span className="text-[12px] font-medium" style={{ color: h.ok ? "var(--good)" : "var(--warn)" }}>{h.ok ? "Healthy" : "Needs attention"}</span></div>
+                <p className="mt-1 text-[12px] text-ink-3">{h.detail}</p>
               </div>
             ))}
           </div>
@@ -86,7 +94,7 @@ export default async function Settings({ searchParams }: { searchParams: Promise
           {health.mock && <div className="mt-3"><Notice tone="warn">Mock WordPress mode is on (development only). Nothing is sent to your real site.</Notice></div>}
         </Section>
 
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid gap-6 xl:grid-cols-2">
           <Section id="general" title="Workspace">
             <form action={updateGeneral} className="space-y-3">
               <Hidden ws={ws} />
@@ -105,17 +113,17 @@ export default async function Settings({ searchParams }: { searchParams: Promise
         </div>
 
         <Section id="publishing" title="Publishing mode" subtitle="New workspaces start in Draft only.">
-          <div className="mb-3 flex items-center gap-2 text-sm">Current mode: <Badge tone={s?.publishing_mode === "auto_publish" ? "info" : "neutral"}>{s?.publishing_mode?.replace("_", " ")}</Badge>{s?.auto_publish_confirmed_at && s.publishing_mode === "auto_publish" && <span className="text-xs text-ink-3">enabled {formatInZone(s.auto_publish_confirmed_at, tz)}</span>}</div>
+          {s?.auto_publish_confirmed_at && s.publishing_mode === "auto_publish" && <p className="mb-3 text-[13px] text-ink-3">Auto-publish turned on {formatInZone(s.auto_publish_confirmed_at, tz)}.</p>}
           <div className="grid gap-3 md:grid-cols-3">
             {[
               { mode: "dry_run", title: "Dry run", text: "Research, score, deduplicate, write and generate images. WordPress is never modified." },
               { mode: "draft_only", title: "Draft only", text: "Create WordPress drafts for you to review and publish manually." },
               { mode: "auto_publish", title: "Auto-publish", text: "Publish automatically, but only articles that pass every check. Anything that fails a check becomes a draft." },
             ].map((m) => (
-              <form key={m.mode} action={updatePublishingMode} className={`rounded-xl p-3 ${s?.publishing_mode === m.mode ? "glass-strong ring-2 ring-[var(--accent)]" : "bg-[var(--hairline)]"}`}>
+              <form key={m.mode} action={updatePublishingMode} className={`rounded-lg border p-4 ${s?.publishing_mode === m.mode ? "border-[var(--ink)] bg-[var(--surface)] shadow-[inset_0_0_0_1px_var(--ink)]" : "border-[var(--rule)] bg-[var(--surface-2)]"}`}>
                 <Hidden ws={ws} />
                 <input type="hidden" name="mode" value={m.mode} />
-                <div className="text-sm font-medium">{m.title}</div>
+                <div className="flex items-center justify-between gap-2 text-[14px] font-semibold">{m.title}{s?.publishing_mode === m.mode && <span className="text-[12px] font-medium text-ink-3">Current</span>}</div>
                 <p className="mt-1 text-xs text-ink-2">{m.text}</p>
                 {m.mode === "auto_publish" && isOwner && s?.publishing_mode !== "auto_publish" && (
                   <div className="mt-2"><Field label='Type "AUTO-PUBLISH" to confirm'><input className="field" name="confirm" autoComplete="off" /></Field></div>
@@ -126,7 +134,7 @@ export default async function Settings({ searchParams }: { searchParams: Promise
           </div>
         </Section>
 
-        <Section id="editorial" title="Editorial rules & quality thresholds">
+        <Section id="editorial" title="Editorial rules">
           <form action={updateEditorial} className="grid gap-3 md:grid-cols-3">
             <Hidden ws={ws} />
             <div className="md:col-span-3">
@@ -162,7 +170,7 @@ export default async function Settings({ searchParams }: { searchParams: Promise
             <div className="mb-4 flex flex-wrap items-center gap-2 text-sm">
               <Badge tone={conn.status === "ok" ? "good" : conn.status === "error" ? "bad" : "neutral"} icon>{conn.status}</Badge>
               <span>{caps.site_name ?? conn.site_url}</span>
-              <span className="text-xs text-ink-3">as {conn.username} ({caps.roles?.join(", ")}) · SEO plugin: {conn.seo_plugin} · credential v{conn.credential_version} · password {hasSecret ? "stored encrypted" : "missing"}</span>
+              <span className="text-[13px] text-ink-3">Signed in as {conn.username} ({caps.roles?.join(", ")}). SEO plugin: {conn.seo_plugin}. Credential version {conn.credential_version}, password {hasSecret ? "stored encrypted" : "missing"}.</span>
               {caps.publish_posts === false && <Badge tone="warn">user cannot publish</Badge>}
             </div>
           )}
@@ -188,7 +196,7 @@ export default async function Settings({ searchParams }: { searchParams: Promise
             <form action={updateCategoryMap} className="mt-5 grid gap-3 md:grid-cols-4">
               <Hidden ws={ws} />
               {CATEGORIES.map((c) => (
-                <Field key={c} label={`${CATEGORY_LABEL[c]} → WordPress category`}>
+                <Field key={c} label={`WordPress category for ${CATEGORY_LABEL[c]}`}>
                   <select className="field" name={`cat_${c}`} defaultValue={map[c] ?? ""} disabled={dis}>
                     <option value="">(not mapped)</option>
                     {(caps.categories ?? []).map((wc) => <option key={wc.id} value={wc.id}>{wc.name}</option>)}
@@ -200,8 +208,8 @@ export default async function Settings({ searchParams }: { searchParams: Promise
           )}
         </Section>
 
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Section id="models" title="AI models (OpenRouter → Google only)" subtitle="Server defaults come from environment variables. Overrides apply to this workspace and are checked against OpenRouter's model list.">
+        <div className="grid gap-6 xl:grid-cols-2">
+          <Section id="models" title="AI models" subtitle="Server defaults come from environment variables. Overrides apply to this workspace and are checked against OpenRouter's model list.">
             <dl className="mb-3 grid grid-cols-3 gap-2 text-xs">
               <div><dt className="text-ink-3">Text default</dt><dd className="font-mono">{e.OPENROUTER_TEXT_MODEL}</dd></div>
               <div><dt className="text-ink-3">Research default</dt><dd className="font-mono">{e.OPENROUTER_RESEARCH_MODEL}</dd></div>
@@ -227,7 +235,7 @@ export default async function Settings({ searchParams }: { searchParams: Promise
           </Section>
         </div>
 
-        <Section id="members" title="Members & invitations" subtitle="Owners manage settings and credentials; editors can trigger runs and give feedback; viewers can only read.">
+        <Section id="members" title="Members" subtitle="Owners manage settings and credentials; editors can trigger runs and give feedback; viewers can only read.">
           <Table head={["Member", "Role", "Joined", ""]}>
             {(members ?? []).map((m) => (
               <tr key={m.user_id}>
@@ -272,6 +280,7 @@ export default async function Settings({ searchParams }: { searchParams: Promise
             </>
           )}
         </Section>
+      </div>
       </div>
     </>
   );

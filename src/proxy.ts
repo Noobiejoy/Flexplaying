@@ -1,10 +1,13 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { canonicalRedirect } from "@/lib/canonical";
 
 const PUBLIC_PATHS = ["/login", "/signup", "/forgot-password", "/auth", "/setup", "/api/cron", "/api/health"];
 
 /** Refreshes the Supabase session cookie and redirects anonymous users to /login. */
 export async function proxy(request: NextRequest) {
+  const canonical = canonicalRedirect(request.nextUrl, request.headers.get("host"), process.env.APP_BASE_URL, process.env.VERCEL_ENV);
+  if (canonical) return NextResponse.redirect(canonical, 308);
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const path = request.nextUrl.pathname;

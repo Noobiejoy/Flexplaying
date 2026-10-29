@@ -7,6 +7,12 @@
 3. **Scheduler**: run `supabase/scheduler/setup_cron.sql` once with your real URL and `CRON_SECRET`.
 4. **App**: sign up, create a workspace, connect WordPress, start a dry run, review the trace, then enable automation.
 
+### Custom domain
+
+Production runs at **https://editor.flexplaying.com**. In Hostinger DNS, `editor` is an ALIAS record pointing to the target Vercel shows under Project → Settings → Domains. Hostinger does not allow a CNAME next to an ALIAS on the same name, so the existing ALIAS was repointed instead.
+
+`APP_BASE_URL` (Vercel) and `editorialos_app_url` (Supabase Vault) both hold this address. In production, `src/proxy.ts` redirects every other host, including the `*.vercel.app` addresses, to it with a 308. `/api/*` is exempt so a scheduler still pointing at an old URL keeps working. Sign-in cookies belong to one host, which is another reason to use a single address. To move the app to another domain: add it in Vercel, update DNS, change both settings above, and update the Supabase Auth URLs (README step 1).
+
 ### Why not Vercel Cron?
 
 On the Hobby plan, Vercel Cron runs at most once a day, with imprecise timing. Three windows a day need either Pro or an external trigger. Supabase Cron is available on every Supabase plan, so it drives a 5-minute tick, and the app decides which slots are due. If you move to Vercel Pro and prefer Vercel Cron, add the following to `vercel.json`. The endpoint accepts `Authorization: Bearer $CRON_SECRET`, which Vercel sends automatically when `CRON_SECRET` is set:

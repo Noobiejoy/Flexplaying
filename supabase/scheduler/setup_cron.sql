@@ -11,7 +11,7 @@ create extension if not exists pg_net;
 -- 2. Secrets in Supabase Vault (encrypted at rest; never stored in migrations).
 do $$
 declare
-  app_url text := 'https://REPLACE-WITH-YOUR-APP.vercel.app';  -- no trailing slash
+  app_url text := 'https://REPLACE-WITH-YOUR-APP-DOMAIN';  -- e.g. https://editor.example.com, no trailing slash
   cron_secret text := 'REPLACE-WITH-THE-SAME-CRON_SECRET-AS-VERCEL';
   existing uuid;
 begin

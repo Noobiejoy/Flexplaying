@@ -3,6 +3,7 @@ import { signOut } from "@/app/actions/auth";
 import { switchWorkspace } from "@/app/actions/workspace";
 import { Mark } from "@/components/mark";
 import { Nav } from "@/components/nav";
+import { ThemeSwitch } from "@/components/theme-switch";
 import { statusLabel } from "@/components/ui";
 import { currentWorkspace } from "@/lib/auth/session";
 import { ACTIVE_STATUSES } from "@/lib/dashboard/stages";
@@ -64,6 +65,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               {status}
               <div className="text-[12px] text-[var(--desk-ink-2)]">{next ? `Next run ${formatInZone(next.scheduledFor, tz)}` : "Scheduled runs are off"}. Mode: {statusLabel(settings?.publishing_mode ?? "")}.</div>
               {workspacePicker}
+              <ThemeSwitch />
               <div className="flex items-center justify-between border-t border-[var(--desk-2)] pt-3 text-[13px]">
                 <Link href="/profile" className="truncate text-[var(--desk-ink-2)] hover:text-[var(--desk-ink)]">{user.email}</Link>
                 <form action={signOut}><button className="text-[var(--desk-ink-2)] hover:text-[var(--desk-ink)]">Sign out</button></form>
@@ -84,6 +86,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               Mode: {statusLabel(settings?.publishing_mode ?? "")}
             </p>
           </div>
+          <ThemeSwitch />
           <div className="flex items-center justify-between gap-2 px-1 text-[13px] text-[var(--desk-ink-2)]">
             <Link href="/profile" className="truncate hover:text-[var(--desk-ink)]">{user.email}</Link>
             <form action={signOut}><button className="shrink-0 hover:text-[var(--desk-ink)]">Sign out</button></form>

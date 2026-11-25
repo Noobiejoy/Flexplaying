@@ -16,6 +16,9 @@ export interface SeoFields {
   externalLinks: number;
 }
 
+/** Bodies below this word count fail the "thin content" SEO check (FAQ, related links and sources excluded). */
+export const THIN_CONTENT_MIN_WORDS = 250;
+
 export interface Check {
   id: string;
   label: string;
@@ -74,7 +77,7 @@ export function validateSeo(f: SeoFields, opts: { minWords: number; maxWords: nu
   add("kw_density", "No keyword stuffing", density <= 0.03, density > 0.05 ? "error" : "warning", `${(density * 100).toFixed(1)}% (≤3%)`);
   add("no_h1", "No H1 inside body (title is the H1)", !/<h1[\s>]/i.test(f.bodyHtml), "error", "");
   add("headings", "Descriptive section headings", words < 450 || h2 >= 2, "warning", `${h2} H2 headings`);
-  add("length_min", "Article not too thin", words >= 250, "error", `${words} words (≥250)`);
+  add("length_min", "Article not too thin", words >= THIN_CONTENT_MIN_WORDS, "error", `${words} words (≥${THIN_CONTENT_MIN_WORDS})`);
   add("length_range", "Within target length", words >= opts.minWords && words <= opts.maxWords, "warning", `${words} words (${opts.minWords}–${opts.maxWords}); shorter is fine for brief updates`);
   const exWords = wordCount(f.excerpt);
   add("excerpt", "Excerpt length", exWords >= 12 && exWords <= 60, "warning", `${exWords} words`);

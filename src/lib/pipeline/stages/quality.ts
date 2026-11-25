@@ -8,6 +8,7 @@ import type { StageContext, StageResult } from "../context";
 import { StageError } from "../context";
 import { reviewJsonSchema, reviewPrompt, reviewSchema, type ReviewOutput } from "../prompts";
 import type { ClaimRecord } from "../types";
+import { withoutRelatedSection } from "./write";
 
 /**
  * Quoted passages (4+ words) in the article that the research did not record.
@@ -83,7 +84,7 @@ export async function qualityStage(sc: StageContext): Promise<StageResult> {
   const claims = await deps.store.getClaims(run.selected_candidate_id);
   await sc.ensureModel(sc.models.text, "text");
 
-  const bodyText = stripHtml(article.body_html);
+  const bodyText = stripHtml(withoutRelatedSection(article.body_html));
   const sources = await deps.store.getCandidateSources(run.selected_candidate_id);
   const p = reviewPrompt(
     { headline: article.headline, bodyText },

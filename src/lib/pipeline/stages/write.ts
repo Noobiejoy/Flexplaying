@@ -10,8 +10,32 @@ import { validateSeo, type SeoReport } from "@/lib/editorial/seo";
 import { stripHtml } from "@/lib/editorial/text";
 import type { StageContext, StageResult } from "../context";
 import { StageError } from "../context";
-import { articleJsonSchema, articleSchema, writerPrompt, type ArticleOutput, type WriterInput } from "../prompts";
+import { articleJsonSchema, articleSchema, WRITER_MIN_WORDS, writerPrompt, type ArticleOutput, type WriterInput } from "../prompts";
 import type { ClaimRecord, SourceRecord } from "../types";
+
+/** Most related site articles listed under an article. */
+export const MAX_RELATED_LINKS = 3;
+const RELATED_START = "<!-- editorialos:related -->";
+const RELATED_END = "<!-- /editorialos:related -->";
+
+/**
+ * The "Related coverage" list of existing site articles. It is built by the
+ * app rather than the writer, so the writer is never tempted to work other
+ * titles into the story as unsupported context.
+ */
+export function relatedSection(links: { title: string; url: string }[]): string {
+  if (links.length === 0) return "";
+  const items = links.slice(0, MAX_RELATED_LINKS).map((l) => `<li><a href="${escapeHtml(l.url)}">${escapeHtml(l.title)}</a></li>`).join("\n");
+  return `${RELATED_START}\n<h2>Related coverage</h2>\n<ul>\n${items}\n</ul>\n${RELATED_END}`;
+}
+
+/** The article without its related-coverage list: link titles are navigation, not statements to review. */
+export function withoutRelatedSection(html: string): string {
+  const start = html.indexOf(RELATED_START);
+  const end = html.indexOf(RELATED_END);
+  if (start < 0 || end < start) return html;
+  return `${html.slice(0, start)}${html.slice(end + RELATED_END.length)}`;
+}
 
 function truncateAtWord(s: string, max: number): string {
   if (s.length <= max) return s;
@@ -72,6 +96,9 @@ export function composeArticle(
   if (faq.length) {
     body += `\n<h2>Frequently asked questions</h2>\n${faq.map((q) => `<h3>${escapeHtml(q.question)}</h3>\n<p>${escapeHtml(q.answer)}</p>`).join("\n")}`;
   }
+  const related = ctx.internal.filter((l) => !clean.internalLinks.includes(l.url)).slice(0, MAX_RELATED_LINKS);
+  if (related.length) body += `\n${relatedSection(related)}`;
+  const internalLinks = [...new Set([...clean.internalLinks, ...related.map((l) => l.url)])];
   if (ctx.sources.length) {
     body += `\n<h2>Sources</h2>\n<ul>\n${ctx.sources
       .map((s) => `<li><a href="${escapeHtml(s.url)}" rel="noopener" target="_blank">${escapeHtml(s.title || s.domain)}</a> — ${escapeHtml(s.domain)}</li>`)
@@ -95,7 +122,7 @@ export function composeArticle(
     faq,
     imageAlt,
     imageBrief: plainText(out.image_brief, 600),
-    internalLinks: clean.internalLinks,
+    internalLinks,
     externalLinks: [...new Set([...clean.externalLinks, ...ctx.sources.map((s) => s.url)])],
     removedLinks: clean.removedLinks,
   };
@@ -112,7 +139,7 @@ export function composeArticle(
       bodyHtml: clean.html,
       faq,
       imageAlt,
-      internalLinks: clean.internalLinks.length,
+      internalLinks: internalLinks.length,
       externalLinks: composed.externalLinks.length,
     },
     { minWords: ctx.minWords, maxWords: ctx.maxWords },
@@ -121,8 +148,14 @@ export function composeArticle(
   return { ...composed, seo, originality };
 }
 
-function revisionNotes(a: ComposedArticle): string[] {
-  const notes = a.seo.checks.filter((c) => !c.pass && c.severity === "error").map((c) => `${c.label}: ${c.detail}`);
+export function revisionNotes(a: ComposedArticle): string[] {
+  const notes = a.seo.checks
+    .filter((c) => !c.pass && c.severity === "error")
+    .map((c) =>
+      c.id === "length_min"
+        ? `Too short: body_html has ${a.seo.wordCount} words and must have at least ${WRITER_MIN_WORDS}. Cover every CONFIRMED and ATTRIBUTED claim, including the background ones, and explain what each means for fans; add a section such as "What we know so far" or "What happens next" where the claims support it. Do not add facts, names or other titles that are not in the claims.`
+        : `${c.label}: ${c.detail}`,
+    );
   if (!a.originality.pass) {
     notes.push(`Too close to source wording (overlap ${a.originality.maxSourceOverlap}). Rewrite these passages in original words: ${a.originality.flaggedPassages.slice(0, 3).map((p) => `"${p.passage}"`).join(" ")}`);
   }
@@ -162,7 +195,6 @@ export async function writeStage(sc: StageContext): Promise<StageResult> {
     confirmed: assessment.usableClaims.map((i, k) => ({ n: k + 1, text: claims[i]!.text, sources: claims[i]!.sources.map((s) => nOf(s.id)).filter((n): n is number => Boolean(n)) })),
     attributed: assessment.hedgedClaims.map((i, k) => ({ n: k + 1, text: claims[i]!.text, kind: claims[i]!.kind, status: claims[i]!.status, sources: claims[i]!.sources.map((s) => nOf(s.id)).filter((n): n is number => Boolean(n)) })),
     sources: sourceList,
-    internalLinks: internal,
     minWords: ws.settings.target_words_min,
     maxWords: ws.settings.target_words_max,
     siteName: ws.workspaceName,

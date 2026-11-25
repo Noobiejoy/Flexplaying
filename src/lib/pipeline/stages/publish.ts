@@ -1,3 +1,4 @@
+import { isTargeted } from "./effort";
 import { jsonLdScript, buildNewsArticle, validateNewsArticle } from "@/lib/editorial/schema";
 import { CATEGORY_LABEL } from "@/lib/editorial/categories";
 import { WpError, type WordPressApi, type WpPostSummary } from "@/lib/wordpress/types";
@@ -88,7 +89,8 @@ export async function publishStage(sc: StageContext): Promise<StageResult> {
     await deps.store.updateArticle(article.id, { status: articleStatus, ...extra });
     await deps.store.updateCandidate(article.candidate_id!, { status: articleStatus === "published" ? "published" : articleStatus === "dry_run" ? "dry_run" : "drafted" });
     const produced = run.articles_produced + 1;
-    const more = produced < ws.settings.max_articles_per_run;
+    // Category and topic runs write exactly one article; only legacy runs loop for more.
+    const more = !isTargeted(run) && produced < ws.settings.max_articles_per_run;
     return {
       next: more ? "deduplicating" : runStatus,
       patch: {

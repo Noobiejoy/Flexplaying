@@ -20,6 +20,7 @@ import type {
   SourceInput,
   SourceRecord,
   StageLogInput,
+  TopicRecord,
   UsageEventInput,
   WorkspaceContext,
 } from "./types";
@@ -84,7 +85,26 @@ export class SupabaseStore implements PipelineStore {
       await this.db.from("runs").select("id,status,created_at").eq("workspace_id", workspaceId).neq("id", excludeRunId).filter("status", "in", ACTIVE).limit(20),
       "active runs",
     ) as { id: string; status: string; created_at: string }[];
-    return rows.some((r) => !self || r.created_at < self.created_at || r.status !== "queued");
+    // Queued runs go strictly in creation order (id breaks ties between runs created together).
+    return rows.some((r) => !self || r.created_at < self.created_at || (r.created_at === self.created_at && r.id < self.id) || r.status !== "queued");
+  }
+
+  async existingSlotKeys(workspaceId: string, keys: string[]) {
+    if (keys.length === 0) return new Set<string>();
+    const rows = must(await this.db.from("runs").select("slot_key").eq("workspace_id", workspaceId).in("slot_key", keys), "slot keys") as { slot_key: string }[];
+    return new Set(rows.map((r) => r.slot_key));
+  }
+
+  async getTopic(id: string) {
+    const t = must(await this.db.from("editorial_topics").select("*").eq("id", id).maybeSingle(), "get topic") as TopicRecord | null;
+    return t ? { ...t, local_time: t.local_time ? normalizeHHMM(t.local_time) : null } : null;
+  }
+
+  async topicArticles(topicId: string, limit: number) {
+    return must(
+      await this.db.from("articles").select("headline,created_at,status").eq("topic_id", topicId).in("status", PRODUCED).order("created_at", { ascending: false }).limit(limit),
+      "topic articles",
+    ) as { headline: string; created_at: string; status: string }[];
   }
 
   async log(e: StageLogInput) {
@@ -112,14 +132,21 @@ export class SupabaseStore implements PipelineStore {
 
   async listAutomatedWorkspaces(): Promise<AutomatedWorkspace[]> {
     const settings = must(
-      await this.db.from("workspace_settings").select("workspace_id,timezone,automation_changed_at,missed_run_grace_minutes,publishing_mode").eq("automation_enabled", true),
+      await this.db.from("workspace_settings").select("workspace_id,timezone,automation_changed_at,missed_run_grace_minutes,publishing_mode,enabled_categories").eq("automation_enabled", true),
       "automated workspaces",
-    ) as { workspace_id: string; timezone: string; automation_changed_at: string; missed_run_grace_minutes: number; publishing_mode: AutomatedWorkspace["publishingMode"] }[];
+    ) as { workspace_id: string; timezone: string; automation_changed_at: string; missed_run_grace_minutes: number; publishing_mode: AutomatedWorkspace["publishingMode"]; enabled_categories: Category[] }[];
     if (settings.length === 0) return [];
+    const ids = settings.map((s) => s.workspace_id);
     const schedules = must(
-      await this.db.from("schedules").select("workspace_id,local_time").eq("enabled", true).in("workspace_id", settings.map((s) => s.workspace_id)),
+      await this.db.from("schedules").select("workspace_id,local_time").eq("enabled", true).in("workspace_id", ids),
       "schedules",
     ) as { workspace_id: string; local_time: string }[];
+    // Topics that may still be due: enabled, ending yesterday (UTC) or later. Exact local-day checks happen per slot.
+    const since = new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10);
+    const topics = must(
+      await this.db.from("editorial_topics").select("id,workspace_id,category,local_time,end_date,created_at,updated_at").eq("enabled", true).gte("end_date", since).in("workspace_id", ids),
+      "topics",
+    ) as (AutomatedWorkspace["topics"][number] & { workspace_id: string })[];
     return settings.map((s) => ({
       workspaceId: s.workspace_id,
       timezone: s.timezone,
@@ -127,6 +154,10 @@ export class SupabaseStore implements PipelineStore {
       graceMinutes: s.missed_run_grace_minutes,
       publishingMode: s.publishing_mode,
       localTimes: schedules.filter((x) => x.workspace_id === s.workspace_id).map((x) => normalizeHHMM(x.local_time)),
+      categories: s.enabled_categories,
+      topics: topics
+        .filter((t) => t.workspace_id === s.workspace_id)
+        .map(({ workspace_id: _w, ...t }) => ({ ...t, local_time: t.local_time ? normalizeHHMM(t.local_time) : null })),
     }));
   }
 

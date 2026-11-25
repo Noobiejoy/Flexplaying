@@ -8,6 +8,7 @@ import { useEffect, useRef } from "react";
 const ICON: Record<string, string> = {
   overview: "M3 10.5 10 4l7 6.5M5 9v7h4v-4h2v4h4V9",
   activity: "M2.5 10h3l2-5 3.5 10 2-5h4.5",
+  topics: "M4 7.5h12.5M3.5 12.5H16M8.5 3.5 7 16.5m6.5-13L12 16.5",
   research: "M8.5 14a5.5 5.5 0 1 0 0-11 5.5 5.5 0 0 0 0 11Zm4-1.5L17 17",
   articles: "M5 3h7l3 3v11H5V3Zm7 0v3h3M7.5 9.5h5M7.5 12.5h5",
   costs: "M4 16V9m4 7V5m4 11v-5m4 5V7",
@@ -18,6 +19,7 @@ const ICON: Record<string, string> = {
 const ITEMS = [
   { href: "/overview", label: "Overview", icon: "overview" },
   { href: "/activity", label: "Runs", icon: "activity", count: "active" as const },
+  { href: "/topics", label: "Topics", icon: "topics" },
   { href: "/research", label: "Research", icon: "research" },
   { href: "/articles", label: "Articles", icon: "articles", count: "review" as const },
   { href: "/costs", label: "Costs", icon: "costs" },

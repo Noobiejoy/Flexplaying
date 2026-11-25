@@ -5,6 +5,7 @@ import type { StageContext, StageResult } from "../context";
 import { uniqueBy } from "../unique";
 import { dedupeJsonSchema, dedupePrompt, dedupeSchema } from "../prompts";
 import type { CandidateRecord } from "../types";
+import { effortLimits, gaveUp, isTargeted, tryHarder } from "./effort";
 import { finalStatusForProduced } from "./research";
 
 const ALL_STATUSES = ["publish", "future", "draft", "pending", "private"];
@@ -29,8 +30,8 @@ export async function syncWordPressPosts(sc: StageContext): Promise<{ count: num
   }
 }
 
-async function semanticCheck(sc: StageContext, cand: CandidateRecord, m: DuplicateMatch) {
-  const p = dedupePrompt({ headline: cand.headline, summary: cand.summary }, { title: m.post.title, excerpt: m.post.excerpt, date: m.post.dateGmt ?? null });
+async function semanticCheck(sc: StageContext, cand: CandidateRecord, m: DuplicateMatch, series?: string) {
+  const p = dedupePrompt({ headline: cand.headline, summary: cand.summary }, { title: m.post.title, excerpt: m.post.excerpt, date: m.post.dateGmt ?? null }, { series });
   const res = await sc.tracked("dedupe_semantic", sc.models.text, null, () =>
     sc.deps.ai.complete({ model: sc.models.text, system: p.system, prompt: p.prompt, temperature: 0, jsonSchema: { name: "dedupe_verdict", schema: dedupeJsonSchema } }),
   );
@@ -50,13 +51,19 @@ export async function dedupeStage(sc: StageContext): Promise<StageResult> {
   }
   const cache = await deps.store.listWpPosts(ws.workspaceId, 1000);
   const local = await deps.store.listLocalArticles(ws.workspaceId, 200);
+  const limits = effortLimits(settings, run);
+  // A topic series covers one subject from different angles: shared entities and official
+  // sources are expected, so only a near-identical match is an automatic duplicate and
+  // everything else goes to the angle-aware semantic check.
+  const topic = run.topic_id ? await deps.store.getTopic(run.topic_id) : null;
+  const matchOpts = topic ? { ignoreSourceUrl: true, duplicateAt: 0.9 } : {};
 
   let checked = run.candidates_checked;
   const outcomes: Record<string, unknown>[] = [];
   const candidates = (await deps.store.listCandidates(run.id)).filter((c) => c.status === "ranked").sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0));
 
   for (const cand of candidates) {
-    if (checked >= settings.max_candidates_per_run) break;
+    if (checked >= limits.candidates) break;
     checked++;
     const sources = await deps.store.getCandidateSources(cand.id);
     const dc = { headline: cand.headline, topic: cand.topic, entities: cand.entities, sourceUrls: sources.map((s) => s.url) };
@@ -81,7 +88,7 @@ export async function dedupeStage(sc: StageContext): Promise<StageResult> {
     const byId = new Map<string, ExistingPost>();
     for (const p of [...cache, ...searched, ...local]) byId.set(`${p.origin}:${p.id}`, { ...byId.get(`${p.origin}:${p.id}`), ...p });
     searched = [];
-    const matches = findMatches(dc, [...byId.values()]);
+    const matches = findMatches(dc, [...byId.values()], 5, matchOpts);
 
     const hard = matches.find((m) => m.verdict === "duplicate");
     if (hard) {
@@ -94,7 +101,7 @@ export async function dedupeStage(sc: StageContext): Promise<StageResult> {
 
     let blocked: { verdict: string; reason: string; match: DuplicateMatch } | null = null;
     for (const m of matches.filter((x) => x.verdict === "borderline").slice(0, 2)) {
-      const v = await semanticCheck(sc, cand, m);
+      const v = await semanticCheck(sc, cand, m, topic?.title);
       if ((v.verdict === "same_story" && v.confidence >= 0.6) || v.verdict === "uncertain" || ((v.verdict === "same_story" || v.verdict === "new_development") && v.confidence < 0.6)) {
         blocked = { verdict: v.verdict, reason: v.reason, match: m };
         break;
@@ -122,7 +129,12 @@ export async function dedupeStage(sc: StageContext): Promise<StageResult> {
 
   // No unique candidate in this round.
   const allDuplicates = outcomes.length > 0 && outcomes.every((o) => o.result === "duplicate");
-  if (run.research_round + 1 < settings.max_research_rounds && checked < settings.max_candidates_per_run) {
+  if (isTargeted(run) && run.articles_produced === 0) {
+    const harder = tryHarder(sc, allDuplicates ? "Every candidate was already covered" : "No unique candidate passed duplicate checking", checked);
+    if (harder) return { ...harder, detail: { outcomes } };
+    return gaveUp(sc, allDuplicates ? "duplicate" : "skipped", checked, { outcomes });
+  }
+  if (run.research_round + 1 < limits.rounds && checked < limits.candidates) {
     return {
       next: "researching",
       patch: { research_round: run.research_round + 1, candidates_checked: checked },

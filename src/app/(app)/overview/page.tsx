@@ -4,7 +4,9 @@ import { setAutomation } from "@/app/actions/settings";
 import { resolveNotification, triggerRun } from "@/app/actions/runs";
 import { Flash } from "@/components/flash";
 import { Rail } from "@/components/rail";
-import { Button, Card, Empty, LinkButton, Notice, PageHeader, RunStatus, Section, Stat, StatStrip, TextLink, statusLabel } from "@/components/ui";
+import { Button, Card, Empty, LinkButton, Notice, PageHeader, RunStatus, Section, Stat, StatStrip, TextLink, categoryColor, statusLabel } from "@/components/ui";
+import { CATEGORIES, CATEGORY_LABEL, type Category } from "@/lib/editorial/categories";
+import { runLabel, slotTime, targetSlotKey, topicActiveOn, type RunTarget } from "@/lib/pipeline/targets";
 import { currentWorkspace } from "@/lib/auth/session";
 import { formatUsd } from "@/lib/costs/pricing";
 import { railStates, stageDurations, PIPELINE } from "@/lib/dashboard/stages";
@@ -16,7 +18,9 @@ export const dynamic = "force-dynamic";
 
 const LEVEL_COLOR: Record<string, string> = { failed: "var(--bad)", warning: "var(--warn)", decision: "var(--live)", succeeded: "var(--ink-3)" };
 
-type RunRow = { id: string; status: string; trigger: string; slot_key: string | null; started_at: string | null; completed_at: string | null; created_at: string; outcome_reason: string | null; error_message: string | null; publishing_mode: string; resume_stage: string | null };
+type RunRow = { id: string; status: string; trigger: string; slot_key: string | null; started_at: string | null; completed_at: string | null; created_at: string; outcome_reason: string | null; error_message: string | null; publishing_mode: string; resume_stage: string | null; category: string | null; topic_id: string | null };
+type TopicRow = { id: string; title: string; category: Category; local_time: string | null; end_date: string; enabled: boolean };
+const SLOT_COLS: Record<number, string> = { 1: "sm:grid-cols-1", 2: "sm:grid-cols-2" };
 
 export default async function Overview({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const { sb, membership } = await currentWorkspace();
@@ -27,9 +31,9 @@ export default async function Overview({ searchParams }: { searchParams: Promise
   const today = formatLocalDate(localDateOf(now, tz));
   const dayStart = startOfLocalDay(now, tz).toISOString();
   const monthStart = startOfLocalMonth(now, tz).toISOString();
-  const runCols = "id,status,trigger,slot_key,started_at,completed_at,created_at,outcome_reason,error_message,publishing_mode,resume_stage";
+  const runCols = "id,status,trigger,slot_key,started_at,completed_at,created_at,outcome_reason,error_message,publishing_mode,resume_stage,category,topic_id";
 
-  const [schedules, lastRun, todayRuns, articlesMonth, review, dups, failed, usage, logs, notes, wp] = await Promise.all([
+  const [schedules, lastRun, todayRuns, articlesMonth, review, dups, failed, usage, logs, notes, wp, topicList] = await Promise.all([
     sb.from("schedules").select("local_time").eq("workspace_id", ws).eq("enabled", true),
     sb.from("runs").select(runCols).eq("workspace_id", ws).neq("status", "missed").order("created_at", { ascending: false }).limit(1).maybeSingle(),
     sb.from("runs").select(runCols).eq("workspace_id", ws).gte("created_at", new Date(Date.parse(dayStart) - 6 * 3600_000).toISOString()).order("created_at"),
@@ -41,13 +45,19 @@ export default async function Overview({ searchParams }: { searchParams: Promise
     sb.from("run_stage_logs").select("id,run_id,stage,level,message,started_at").eq("workspace_id", ws).in("level", ["decision", "succeeded", "failed", "warning"]).order("id", { ascending: false }).limit(8),
     sb.from("notifications").select("id,level,title,body,created_at").eq("workspace_id", ws).is("resolved_at", null).order("created_at", { ascending: false }).limit(6),
     sb.from("wordpress_connections").select("status,site_url").eq("workspace_id", ws).maybeSingle(),
+    sb.from("editorial_topics").select("id,title,category,local_time,end_date,enabled").eq("workspace_id", ws).gte("end_date", today).order("end_date"),
   ]);
+  const topics = ((topicList.data ?? []) as TopicRow[]).map((t) => ({ ...t, local_time: t.local_time ? normalizeHHMM(t.local_time) : null }));
+  const liveTopics = topics.filter((t) => topicActiveOn(t, today));
+  const topicTitle = new Map(topics.map((t) => [t.id, t.title]));
+  const enabledCats = CATEGORIES.filter((c) => ((settings?.enabled_categories ?? []) as string[]).includes(c));
   const last = lastRun.data as RunRow | null;
   const { data: lastLogs } = last ? await sb.from("run_stage_logs").select("stage,level,duration_ms").eq("run_id", last.id).in("level", ["succeeded", "failed"]) : { data: [] };
 
   const on = Boolean(settings?.automation_enabled);
   const times = (schedules.data ?? []).map((s) => normalizeHHMM(s.local_time as string)).sort();
-  const next = on ? nextSlot(now, tz, times) : null;
+  const ownTimes = liveTopics.filter((t) => t.enabled && t.local_time).map((t) => t.local_time!);
+  const next = on ? nextSlot(now, tz, [...times, ...ownTimes]) : null;
   const arts = articlesMonth.data ?? [];
   const publishedToday = arts.filter((a) => a.status === "published" && a.created_at >= dayStart).length;
   const publishedMonth = arts.filter((a) => a.status === "published").length;
@@ -68,11 +78,25 @@ export default async function Overview({ searchParams }: { searchParams: Promise
   const p = zonedParts(now, tz);
   const nowFrac = (p.hour * 60 + p.minute) / 1440;
   const runsToday = ((todayRuns.data ?? []) as RunRow[]).filter((r) => r.created_at >= dayStart || r.slot_key?.startsWith(today));
-  const slots = times.map((t) => {
+  // Each slot holds one run per category, then the topics that run with it.
+  const slots = [...new Set([...times, ...ownTimes])].sort().map((t) => {
     const [h, m] = parseHHMM(t);
     const frac = (h * 60 + m) / 1440;
-    const run = runsToday.find((r) => r.slot_key === `${today}T${t}`) ?? null;
-    return { t, frac, run, past: frac <= nowFrac };
+    const key = `${today}T${t}`;
+    const legacy = runsToday.find((r) => r.slot_key === key);
+    const targets: RunTarget[] = [
+      ...(times.includes(t) ? enabledCats.map((category): RunTarget => ({ kind: "category", category })) : []),
+      ...liveTopics.filter((x) => x.enabled && (x.local_time ? x.local_time === t : times.includes(t))).map((x): RunTarget => ({ kind: "topic", topicId: x.id, category: x.category })),
+    ];
+    const rows = legacy
+      ? [{ key: legacy.id, label: "All categories", category: null as string | null, run: legacy as RunRow | null }]
+      : targets.map((tg) => ({
+          key: targetSlotKey(key, tg),
+          label: tg.kind === "topic" ? topicTitle.get(tg.topicId) ?? "Topic" : CATEGORY_LABEL[tg.category],
+          category: tg.category as string | null,
+          run: runsToday.find((r) => r.slot_key === targetSlotKey(key, tg)) ?? null,
+        }));
+    return { t, frac, rows, ran: rows.some((r) => r.run), past: frac <= nowFrac };
   });
   const manualToday = runsToday.filter((r) => r.trigger !== "schedule");
   const dayLabel = new Intl.DateTimeFormat("en-IN", { timeZone: tz, weekday: "long", day: "numeric", month: "long" }).format(now);
@@ -102,6 +126,10 @@ export default async function Overview({ searchParams }: { searchParams: Promise
               <form action={triggerRun} className="flex items-center gap-2">
                 <input type="hidden" name="workspace_id" value={ws} />
                 <input type="hidden" name="back" value="/overview" />
+                <select name="target" className="field !w-auto !py-2 !text-[13px]" defaultValue="all" aria-label="What to run">
+                  <option value="all">All categories</option>
+                  {enabledCats.map((c) => <option key={c} value={c}>{CATEGORY_LABEL[c]} only</option>)}
+                </select>
                 <select name="mode" className="field !w-auto !py-2 !text-[13px]" defaultValue="workspace" aria-label="Run mode">
                   <option value="workspace">Use workspace mode ({statusLabel(settings?.publishing_mode ?? "")})</option>
                   <option value="dry_run">Dry run</option>
@@ -134,32 +162,37 @@ export default async function Overview({ searchParams }: { searchParams: Promise
             {slots.map((s) => (
               <span key={s.t} className="absolute top-0 flex -translate-x-1/2 flex-col items-center" style={{ left: `${s.frac * 100}%` }}>
                 <span className="text-[12px] font-semibold text-ink">{s.t}</span>
-                <span className={`mt-1 h-3 w-3 rounded-full border-2 ${s.run ? "border-[var(--ink)] bg-[var(--ink)]" : s.past ? "border-[var(--ink-3)] bg-[var(--surface)]" : "border-[var(--ink)] bg-[var(--surface)]"}`} />
+                <span className={`mt-1 h-3 w-3 rounded-full border-2 ${s.ran ? "border-[var(--ink)] bg-[var(--ink)]" : s.past ? "border-[var(--ink-3)] bg-[var(--surface)]" : "border-[var(--ink)] bg-[var(--surface)]"}`} />
               </span>
             ))}
             <span className="absolute top-[22px] h-[18px] w-[2px] -translate-x-1/2 rounded-full bg-[var(--live)]" style={{ left: `${nowFrac * 100}%` }} />
           </div>
         </div>
-        <ol className="grid border-t border-[var(--rule)] sm:grid-cols-3 sm:divide-x divide-[var(--rule)]">
-          {slots.length === 0 && <li className="px-5 py-4 text-[14px] text-ink-3 sm:col-span-3">No run times are set. Add them in <TextLink href="/settings#schedule">Settings</TextLink>.</li>}
+        <ol className={`grid border-t border-[var(--rule)] divide-[var(--rule)] sm:divide-x ${SLOT_COLS[slots.length] ?? "sm:grid-cols-3"}`}>
+          {slots.length === 0 && <li className="px-5 py-4 text-[14px] text-ink-3">No run times are set. Add them in <TextLink href="/settings#schedule">Settings</TextLink>.</li>}
           {slots.map((s) => (
             <li key={s.t} className="border-b border-[var(--rule)] px-5 py-4 last:border-b-0 sm:border-b-0">
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex items-baseline justify-between gap-2">
                 <span className="figure text-[24px]">{s.t}</span>
-                {s.run ? <RunStatus status={s.run.status} /> : <span className="text-[12px] text-ink-3">{s.past ? (on ? "No run recorded" : "Skipped while paused") : on ? "Scheduled" : "Paused"}</span>}
+                <span className="text-[12px] text-ink-3">{s.rows.length} article{s.rows.length === 1 ? "" : "s"} planned</span>
               </div>
-              <p className="mt-2 line-clamp-2 text-[13px] text-ink-2">
-                {s.run
-                  ? s.run.error_message ?? s.run.outcome_reason ?? "In progress"
-                  : s.past
-                    ? on
-                      ? "The scheduler did not start this slot. Check Settings for scheduler health."
-                      : "Automation was paused at this time."
-                    : on
-                      ? "Research starts at this time."
-                      : "Resume automation to run this slot."}
-              </p>
-              {s.run && <TextLink href={`/activity/${s.run.id}`} className="mt-2 inline-block text-[13px]">Open trace</TextLink>}
+              <ul className="mt-3 space-y-2">
+                {s.rows.map((r) => (
+                  <li key={r.key} className="flex items-center justify-between gap-3 text-[13px]">
+                    <span className="flex min-w-0 items-center gap-2">
+                      {r.category && <span aria-hidden className="h-2 w-2 shrink-0 rotate-45 rounded-[1px]" style={{ background: categoryColor(r.category) }} />}
+                      {r.run ? (
+                        <Link href={`/activity/${r.run.id}`} className="truncate font-medium text-ink hover:underline" title={r.run.error_message ?? r.run.outcome_reason ?? undefined}>{r.label}</Link>
+                      ) : (
+                        <span className="truncate font-medium text-ink">{r.label}</span>
+                      )}
+                    </span>
+                    {r.run ? <RunStatus status={r.run.status} /> : <span className="shrink-0 text-[12px] text-ink-3">{s.past ? (on ? "No run recorded" : "Skipped while paused") : on ? "Scheduled" : "Paused"}</span>}
+                  </li>
+                ))}
+                {s.rows.length === 0 && <li className="text-[13px] text-ink-3">No categories enabled.</li>}
+              </ul>
+              {s.past && on && !s.ran && s.rows.length > 0 && <p className="mt-2 text-[12px] text-ink-3">The scheduler did not start this slot. Check Settings for scheduler health.</p>}
             </li>
           ))}
         </ol>
@@ -177,7 +210,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
               <Card>
                 <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1">
                   <RunStatus status={last.status} />
-                  <span className="text-[13px] text-ink-3">{last.trigger === "schedule" ? `Scheduled, ${last.slot_key?.slice(11)}` : "Manual"} run started {formatInZone(last.started_at ?? last.created_at, tz)}</span>
+                  <span className="text-[13px] text-ink-3">{runLabel(last, topicTitle.get(last.topic_id ?? ""))}, {last.trigger === "schedule" ? `scheduled ${slotTime(last.slot_key)}` : "manual"} run started {formatInZone(last.started_at ?? last.created_at, tz)}</span>
                 </div>
                 <Rail states={railStates(last, lastLogs ?? [])} durations={stageDurations((lastLogs ?? []) as { stage: string; duration_ms: number | null }[])} />
                 <p className="mt-4 border-t border-[var(--rule)] pt-3 text-[14px] text-ink-2">{last.error_message ?? last.outcome_reason ?? "In progress"}</p>
@@ -238,6 +271,27 @@ export default async function Overview({ searchParams }: { searchParams: Promise
                   </div>
                 ))}
               </div>
+            )}
+          </Section>
+
+          <Section title="Topics" action={<TextLink href="/topics" className="text-[13px]">{canEdit ? "Manage" : "View"}</TextLink>}>
+            {liveTopics.length === 0 ? (
+              <p className="panel rounded-xl px-4 py-4 text-[14px] text-ink-3">No topics running. Add one to give a subject an article every day until a date you choose.</p>
+            ) : (
+              <ul className="panel divide-y divide-[var(--rule)] rounded-xl">
+                {liveTopics.slice(0, 5).map((t) => {
+                  const r = runsToday.filter((x) => x.topic_id === t.id).at(-1);
+                  return (
+                    <li key={t.id} className="flex items-center justify-between gap-3 px-4 py-3">
+                      <div className="min-w-0">
+                        <div className="truncate text-[14px] font-medium text-ink">{t.title}</div>
+                        <div className="text-[12px] text-ink-3">{CATEGORY_LABEL[t.category]} · until {t.end_date}{t.enabled ? "" : " · paused"}</div>
+                      </div>
+                      {r ? <RunStatus status={r.status} /> : <span className="shrink-0 text-[12px] text-ink-3">{t.enabled ? "Waiting" : "Paused"}</span>}
+                    </li>
+                  );
+                })}
+              </ul>
             )}
           </Section>
 

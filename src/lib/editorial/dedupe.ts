@@ -40,7 +40,17 @@ export function slugify(s: string, maxWords = 9): string {
     .replace(/-+$/g, "");
 }
 
-export function comparePost(c: DedupeCandidate, post: ExistingPost): DuplicateMatch {
+export interface CompareOptions {
+  /**
+   * Ignore the "post already cites this source" signal. Used for topic series,
+   * where every part legitimately cites the same official pages.
+   */
+  ignoreSourceUrl?: boolean;
+  /** Score at or above which a match is a hard duplicate (default DUPLICATE_THRESHOLD). */
+  duplicateAt?: number;
+}
+
+export function comparePost(c: DedupeCandidate, post: ExistingPost, opts: CompareOptions = {}): DuplicateMatch {
   const candTitle = new Set(tokens(`${c.headline}`));
   const candTopic = new Set(tokens(`${c.topic}`));
   const postTitle = new Set(tokens(post.title));
@@ -53,7 +63,7 @@ export function comparePost(c: DedupeCandidate, post: ExistingPost): DuplicateMa
   const slug = jaccard(new Set(post.slug.split("-").filter((t) => t.length > 1)), new Set(slugify(c.headline).split("-")));
 
   const content = post.content ?? "";
-  const sourceUrl = c.sourceUrls.some((u) => {
+  const sourceUrl = !opts.ignoreSourceUrl && c.sourceUrls.some((u) => {
     const cu = canonicalUrl(u);
     return cu.length > 12 && content.includes(cu.replace(/^https?:\/\//, ""));
   });
@@ -61,7 +71,7 @@ export function comparePost(c: DedupeCandidate, post: ExistingPost): DuplicateMa
   let score = 0.5 * title + 0.3 * entities + 0.2 * slug;
   if (sourceUrl) score = Math.max(score, 0.85);
   score = Math.round(score * 1000) / 1000;
-  const verdict = score >= DUPLICATE_THRESHOLD ? "duplicate" : score >= BORDERLINE_THRESHOLD ? "borderline" : "distinct";
+  const verdict = score >= (opts.duplicateAt ?? DUPLICATE_THRESHOLD) ? "duplicate" : score >= BORDERLINE_THRESHOLD ? "borderline" : "distinct";
   return {
     post,
     score,
@@ -70,9 +80,9 @@ export function comparePost(c: DedupeCandidate, post: ExistingPost): DuplicateMa
   };
 }
 
-export function findMatches(c: DedupeCandidate, posts: ExistingPost[], limit = 5): DuplicateMatch[] {
+export function findMatches(c: DedupeCandidate, posts: ExistingPost[], limit = 5, opts: CompareOptions = {}): DuplicateMatch[] {
   return posts
-    .map((p) => comparePost(c, p))
+    .map((p) => comparePost(c, p, opts))
     .filter((m) => m.verdict !== "distinct")
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);

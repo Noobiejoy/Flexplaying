@@ -62,6 +62,27 @@ export interface RunRecord {
   error_message: string | null;
   triggered_by: string | null;
   created_at: string;
+  /** The category this run writes for (also set on topic runs). Null only on legacy all-category runs. */
+  category: Category | null;
+  /** Set when the run writes the day's article for an editorial topic. */
+  topic_id: string | null;
+  /** How hard the run is trying: 0 normal, 1 wider 7-day search, 2 feature/explainer fallback. */
+  escalation: number;
+}
+
+export interface TopicRecord {
+  id: string;
+  workspace_id: string;
+  title: string;
+  category: Category;
+  notes: string;
+  /** Last local day (YYYY-MM-DD) the topic gets an article. */
+  end_date: string;
+  /** Own daily time (HH:MM), or null to run in the workspace's schedule slots. */
+  local_time: string | null;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface WorkspaceSettings {
@@ -215,6 +236,7 @@ export interface ArticleRecord {
   wp_synced_at: string | null;
   seo_sync: Record<string, unknown>;
   publish_key: string;
+  topic_id: string | null;
   created_at: string;
 }
 
@@ -285,6 +307,10 @@ export interface AutomatedWorkspace {
   graceMinutes: number;
   publishingMode: PublishingMode;
   localTimes: string[];
+  /** Enabled categories: each gets its own run in every schedule slot. */
+  categories: Category[];
+  /** Enabled topics that have not ended (end date on or after yesterday). */
+  topics: Pick<TopicRecord, "id" | "category" | "local_time" | "end_date" | "created_at" | "updated_at">[];
 }
 
 export interface NewRunInput {
@@ -296,6 +322,8 @@ export interface NewRunInput {
   publishing_mode: PublishingMode;
   triggered_by: string | null;
   outcome_reason?: string | null;
+  category?: Category | null;
+  topic_id?: string | null;
 }
 
 /** Persistence boundary for the pipeline. Implemented by Supabase (prod) and memory (tests). */
@@ -308,11 +336,16 @@ export interface PipelineStore {
   releaseRun(id: string, owner: string): Promise<void>;
   listRunnableRuns(now: Date, limit: number): Promise<RunRecord[]>;
   hasOtherActiveRun(workspaceId: string, excludeRunId: string): Promise<boolean>;
+  /** Which of these slot keys already have a run (any status). */
+  existingSlotKeys(workspaceId: string, keys: string[]): Promise<Set<string>>;
   log(entry: StageLogInput): Promise<void>;
   // workspace
   loadContext(workspaceId: string): Promise<WorkspaceContext>;
   listAutomatedWorkspaces(): Promise<AutomatedWorkspace[]>;
   getSecretCiphertext(workspaceId: string, kind: "wordpress_app_password" | "notification_webhook"): Promise<string | null>;
+  getTopic(id: string): Promise<TopicRecord | null>;
+  /** Articles written for a topic (drafted, published or awaiting review), newest first. */
+  topicArticles(topicId: string, limit: number): Promise<{ headline: string; created_at: string; status: string }[]>;
   // research
   insertCandidates(runId: string, workspaceId: string, round: number, input: CandidateInput[]): Promise<CandidateRecord[]>;
   updateCandidate(id: string, patch: Partial<CandidateRecord>): Promise<void>;

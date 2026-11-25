@@ -92,8 +92,6 @@ export async function updatePublishingMode(fd: FormData) {
 
 const editorialSchema = z.object({
   enabled_categories: z.array(z.enum(CATEGORIES)).min(1, "Enable at least one category"),
-  max_articles_per_run: z.coerce.number().int().min(1).max(3),
-  daily_article_limit: z.coerce.number().int().min(0).max(24),
   min_candidate_score: z.coerce.number().min(0).max(1),
   min_quality_score: z.coerce.number().min(0).max(1),
   target_words_min: z.coerce.number().int().min(150).max(3000),
@@ -114,8 +112,6 @@ export async function updateEditorial(fd: FormData) {
     const { sb } = await requireRole(id, "owner");
     const v = editorialSchema.parse({
       enabled_categories: fd.getAll("enabled_categories").map(String),
-      max_articles_per_run: fd.get("max_articles_per_run"),
-      daily_article_limit: fd.get("daily_article_limit"),
       min_candidate_score: fd.get("min_candidate_score"),
       min_quality_score: fd.get("min_quality_score"),
       target_words_min: fd.get("target_words_min"),

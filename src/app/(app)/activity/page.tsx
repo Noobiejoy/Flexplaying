@@ -3,7 +3,8 @@ import { triggerRun } from "@/app/actions/runs";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { Flash } from "@/components/flash";
 import { MiniRail } from "@/components/rail";
-import { Button, Empty, PageHeader, RunStatus, statusLabel } from "@/components/ui";
+import { Button, Empty, PageHeader, RunStatus, categoryColor, statusLabel } from "@/components/ui";
+import { ESCALATION_LABEL, runLabel, slotTime } from "@/lib/pipeline/targets";
 import { currentWorkspace } from "@/lib/auth/session";
 import { duration, formatInZone } from "@/lib/dashboard/time";
 import { ACTIVE_STATUSES, railStates } from "@/lib/dashboard/stages";
@@ -20,7 +21,7 @@ export default async function Activity({ searchParams }: { searchParams: Promise
   const { data: settings } = await sb.from("workspace_settings").select("timezone").eq("workspace_id", ws).single();
   const tz = settings?.timezone ?? "Asia/Kolkata";
   const filter = FILTERS.includes(sp.status ?? "") ? sp.status! : "all";
-  let q = sb.from("runs").select("id,trigger,status,publishing_mode,scheduled_for,started_at,completed_at,created_at,outcome_reason,error_message,stage_attempt,slot_key,resume_stage").eq("workspace_id", ws).order("created_at", { ascending: false }).limit(60);
+  let q = sb.from("runs").select("id,trigger,status,publishing_mode,scheduled_for,started_at,completed_at,created_at,outcome_reason,error_message,stage_attempt,slot_key,resume_stage,category,topic_id,escalation").eq("workspace_id", ws).order("created_at", { ascending: false }).limit(60);
   if (filter === "active") q = q.in("status", ACTIVE_STATUSES);
   else if (filter !== "all") q = q.eq("status", filter);
   const { data: runs } = await q;
@@ -28,6 +29,9 @@ export default async function Activity({ searchParams }: { searchParams: Promise
   const ids = rows.map((r) => r.id);
   const { data: stageLogs } = ids.length ? await sb.from("run_stage_logs").select("run_id,stage,level").in("run_id", ids).in("level", ["succeeded", "failed"]).limit(1000) : { data: [] };
   const anyActive = rows.some((r) => ACTIVE_STATUSES.includes(r.status));
+  const topicIds = [...new Set(rows.map((r) => r.topic_id).filter(Boolean))] as string[];
+  const { data: topicRows } = topicIds.length ? await sb.from("editorial_topics").select("id,title").in("id", topicIds) : { data: [] };
+  const topicTitle = new Map((topicRows ?? []).map((t) => [t.id as string, t.title as string]));
 
   return (
     <>
@@ -42,7 +46,8 @@ export default async function Activity({ searchParams }: { searchParams: Promise
                 <input type="hidden" name="workspace_id" value={ws} />
                 <input type="hidden" name="back" value="/activity" />
                 <input type="hidden" name="mode" value="dry_run" />
-                <Button variant="secondary">Start a dry run</Button>
+                <input type="hidden" name="target" value="all" />
+                <Button variant="secondary">Dry run all categories</Button>
               </form>
             )}
           </>
@@ -70,7 +75,11 @@ export default async function Activity({ searchParams }: { searchParams: Promise
               <li key={r.id}>
                 <Link href={`/activity/${r.id}`} className="grid gap-x-6 gap-y-2 px-4 py-4 hover:bg-[var(--surface-2)] sm:px-5 md:grid-cols-[200px_180px_minmax(0,1fr)] md:items-center">
                   <div className="min-w-0">
-                    <div className="text-[14px] font-semibold text-ink">{r.trigger === "schedule" ? `${r.slot_key?.slice(11)} scheduled run` : "Manual run"}</div>
+                    <div className="flex items-center gap-2 text-[14px] font-semibold text-ink">
+                      {r.category && <span aria-hidden className="h-2 w-2 shrink-0 rotate-45 rounded-[1px]" style={{ background: categoryColor(r.category) }} />}
+                      <span className="truncate">{runLabel(r, topicTitle.get(r.topic_id ?? ""))}</span>
+                    </div>
+                    <div className="text-[12px] text-ink-3">{r.trigger === "schedule" ? `${slotTime(r.slot_key)} scheduled run` : "Manual run"}</div>
                     <div className="text-[12px] text-ink-3">{formatInZone(r.started_at ?? r.scheduled_for ?? r.created_at, tz)}, {duration(r.started_at, r.completed_at)}</div>
                   </div>
                   <div className="flex items-center gap-3 md:block">
@@ -79,7 +88,7 @@ export default async function Activity({ searchParams }: { searchParams: Promise
                   </div>
                   <div className="min-w-0">
                     <p className={`line-clamp-2 text-[13px] ${r.error_message ? "text-[var(--bad)]" : "text-ink-2"}`}>{r.error_message ?? r.outcome_reason ?? "In progress"}</p>
-                    <p className="mt-0.5 text-[12px] text-ink-3">{statusLabel(r.publishing_mode)}{r.stage_attempt > 1 ? `, attempt ${r.stage_attempt}` : ""}</p>
+                    <p className="mt-0.5 text-[12px] text-ink-3">{statusLabel(r.publishing_mode)}{r.escalation > 0 ? `, tried harder: ${ESCALATION_LABEL[r.escalation]?.toLowerCase()}` : ""}{r.stage_attempt > 1 ? `, attempt ${r.stage_attempt}` : ""}</p>
                   </div>
                 </Link>
               </li>

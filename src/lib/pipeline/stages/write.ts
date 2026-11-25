@@ -179,10 +179,12 @@ export async function writeStage(sc: StageContext): Promise<StageResult> {
 
   const cache = await deps.store.listWpPosts(ws.workspaceId, 1000);
   const dc = { headline: cand.headline, topic: cand.topic, entities: cand.entities, sourceUrls: sourceList.map((s) => s.url) };
+  // A topic series links its own earlier parts, which naturally score close to "duplicate".
+  const relatedMax = run.topic_id ? 0.95 : DUPLICATE_THRESHOLD;
   const internal = cache
     .filter((p) => p.status === "publish" && p.link)
-    .map((p) => ({ p, score: comparePost(dc, p).score }))
-    .filter((x) => x.score >= 0.12 && x.score < DUPLICATE_THRESHOLD)
+    .map((p) => ({ p, score: comparePost(dc, p, { ignoreSourceUrl: Boolean(run.topic_id) }).score }))
+    .filter((x) => x.score >= 0.12 && x.score < relatedMax)
     .sort((a, b) => b.score - a.score)
     .slice(0, 6)
     .map((x) => ({ title: x.p.title, url: x.p.link }));
@@ -248,6 +250,7 @@ export async function writeStage(sc: StageContext): Promise<StageResult> {
     run_id: run.id,
     candidate_id: cand.id,
     category: cand.category,
+    topic_id: run.topic_id ?? null,
     status: "ready" as const,
     publishing_mode: run.publishing_mode,
     draft_headline: first.headline,

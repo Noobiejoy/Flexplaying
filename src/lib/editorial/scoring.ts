@@ -69,6 +69,11 @@ export function scoreCandidate(
     prefs: EditorialPreferences;
     enabledCategories: Category[];
     recentCategoryCounts: Partial<Record<Category, number>>;
+    /**
+     * Minimum recency component (0-1). Raised for wider searches, features and
+     * topic articles, where a story need not be from the last day or two.
+     */
+    recencyFloor?: number;
   },
 ): ScoreResult {
   const reasons: string[] = [];
@@ -82,7 +87,8 @@ export function scoreCandidate(
   if (blocked) rejection = `Matches blocked term "${blocked}"`;
 
   const latest = c.sources.map((s) => s.publishedAt).filter((x): x is string => Boolean(x)).sort().at(-1) ?? null;
-  const recency = recencyScore(latest, ctx.now);
+  const rawRecency = recencyScore(latest, ctx.now);
+  const recency = Math.max(rawRecency, clamp01(ctx.recencyFloor ?? 0));
   const source_quality = sourceQualityScore(c.sources);
   const corroboration = corroborationScore(c.sources);
   const catWeight = ctx.prefs.categoryWeights[c.category as Category] ?? 1;
@@ -110,6 +116,7 @@ export function scoreCandidate(
     reasons.push("Low research confidence (×0.85)");
   }
   if (!latest) reasons.push("No source publication date found");
+  if (recency > rawRecency) reasons.push(`Timeliness relaxed for this search (recency ${r3(rawRecency)} → ${r3(recency)})`);
   if (recent > 0) reasons.push(`${recent} recent ${c.category} article(s): diversity ×${r3(diversity)}`);
   if (prefAdj !== 0) reasons.push(`Learned entity preference ${prefAdj > 0 ? "+" : ""}${r3(prefAdj)}`);
   if (catWeight !== 1) reasons.push(`Category weight ×${r3(catWeight)}`);

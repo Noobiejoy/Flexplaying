@@ -4,10 +4,12 @@ import { isCategory, type Category } from "@/lib/editorial/categories";
 import { domainOf, TIER_SCORE } from "@/lib/editorial/domains";
 import { scoreCandidate } from "@/lib/editorial/scoring";
 import { canonicalUrl } from "@/lib/editorial/text";
-import { startOfLocalDay } from "@/lib/schedule/slots";
+import { formatLocalDate, localDateOf, startOfLocalDay } from "@/lib/schedule/slots";
 import { isSafePublicHttpUrl } from "@/lib/wordpress/url";
 import type { StageContext, StageResult } from "../context";
-import { discoveryPrompt, discoverySchema, type DiscoveryOutput } from "../prompts";
+import { discoveryPrompt, discoverySchema, topicPrompt, type DiscoveryOutput } from "../prompts";
+import { ESCALATION_LABEL, topicActiveOn } from "../targets";
+import { gaveUp, isTargeted, searchPlan, tryHarder } from "./effort";
 import type { CandidateInput, SourceInput } from "../types";
 
 const MAX_PAGE_CHECKS = 14;
@@ -96,9 +98,12 @@ export async function researchStage(sc: StageContext): Promise<StageResult> {
   const { deps, run, ws } = sc;
   const now = deps.now();
   const settings = ws.settings;
+  const fresh = run.research_round === 0 && run.articles_produced === 0 && run.escalation === 0;
+  const dayStart = startOfLocalDay(now, settings.timezone).toISOString();
 
-  if (run.research_round === 0 && run.articles_produced === 0) {
-    const produced = await deps.store.countProducedSince(ws.workspaceId, startOfLocalDay(now, settings.timezone).toISOString());
+  // Legacy all-category runs keep the old daily cap. Category runs are one per slot by design.
+  if (fresh && !isTargeted(run)) {
+    const produced = await deps.store.countProducedSince(ws.workspaceId, dayStart);
     if (produced >= settings.daily_article_limit) {
       return {
         next: "skipped",
@@ -108,15 +113,37 @@ export async function researchStage(sc: StageContext): Promise<StageResult> {
     }
   }
 
+  const topic = run.topic_id ? await deps.store.getTopic(run.topic_id) : null;
+  if (run.topic_id && !topic) {
+    return { next: "skipped", patch: { outcome_reason: "The topic was deleted" }, message: "Skipped: the topic no longer exists" };
+  }
+  const covered = topic ? await deps.store.topicArticles(topic.id, 40) : [];
+  if (topic && fresh) {
+    const localToday = formatLocalDate(localDateOf(now, settings.timezone));
+    if (!topicActiveOn(topic, localToday)) {
+      return { next: "skipped", patch: { outcome_reason: `Topic "${topic.title}" ${topic.enabled ? `ended on ${topic.end_date}` : "is paused"}` }, message: `Skipped: topic "${topic.title}" is not active` };
+    }
+    const today = covered.find((a) => a.created_at >= dayStart);
+    if (today) {
+      return { next: "skipped", patch: { outcome_reason: `Topic "${topic.title}" already has today's article ("${today.headline}")` }, message: "Skipped: one article per topic per day" };
+    }
+  }
+
   await sc.ensureModel(sc.models.research, "text");
   const exclude = await deps.store.recentHeadlines(ws.workspaceId, new Date(now.getTime() - 3 * 86_400_000).toISOString());
-  const categories = settings.enabled_categories;
+  const plan = searchPlan(run);
+  const categories: Category[] = topic ? [topic.category] : run.category ? [run.category] : settings.enabled_categories;
   const budget = { remaining: MAX_PAGE_CHECKS };
   const raw: { cat: Category; out: DiscoveryOutput; citations: Map<string, Citation> }[] = [];
   const failures: string[] = [];
+  if (run.escalation > 0 || run.research_round > 0) {
+    await sc.log("info", `Search effort: ${ESCALATION_LABEL[run.escalation] ?? "normal"}, round ${run.research_round + 1}`, { escalation: run.escalation, plan });
+  }
 
   for (const cat of categories) {
-    const p = discoveryPrompt(cat, now.toISOString(), exclude);
+    const p = topic
+      ? topicPrompt({ title: topic.title, category: topic.category, notes: topic.notes, endDate: topic.end_date }, now.toISOString(), covered.map((a) => a.headline), exclude, { broaden: plan.broaden })
+      : discoveryPrompt(cat, now.toISOString(), exclude, isTargeted(run) ? { windowDays: plan.windowDays, mode: plan.mode } : {});
     try {
       const res = await sc.tracked("research", sc.models.research, null, () =>
         deps.ai.research({ model: sc.models.research, system: p.system, prompt: p.prompt }),
@@ -139,12 +166,14 @@ export async function researchStage(sc: StageContext): Promise<StageResult> {
     throw new AiError("server", `All research calls failed (${failures.join("; ")})`);
   }
 
-  const recentCounts = await deps.store.recentCategoryCounts(ws.workspaceId, new Date(now.getTime() - 86_400_000).toISOString());
+  // Each category now gets its own run, so the cross-category diversity penalty only applies to legacy runs.
+  const recentCounts = isTargeted(run) ? {} : await deps.store.recentCategoryCounts(ws.workspaceId, new Date(now.getTime() - 86_400_000).toISOString());
   const scored: { input: CandidateInput; sources: VerifiedSource[]; dropped: string[] }[] = [];
 
   for (const { cat, out, citations } of raw) {
     for (const c of out.candidates) {
-      const category = isCategory(c.category) ? c.category : null;
+      // A topic files every article under the category the editor chose for it.
+      const category = topic ? topic.category : isCategory(c.category) ? c.category : null;
       const { verified, dropped } = await verifySources(sc, c.sources, citations, budget);
       const scoreSources = verified.map((v) => ({ url: v.url, tier: v.quality_tier, publishedAt: v.published_at }));
       const result = scoreCandidate(
@@ -158,8 +187,12 @@ export async function researchStage(sc: StageContext): Promise<StageResult> {
           modelOriginality: c.originality,
           confidence: c.confidence,
         },
-        { now, prefs: ws.prefs, enabledCategories: settings.enabled_categories, recentCategoryCounts: recentCounts },
+        { now, prefs: ws.prefs, enabledCategories: topic ? [topic.category] : settings.enabled_categories, recentCategoryCounts: recentCounts, recencyFloor: plan.recencyFloor },
       );
+      if (!topic && run.category && category !== run.category && !result.rejection) {
+        result.rejection = `Outside the ${run.category} desk (research labelled it ${c.category})`;
+        result.overall = 0;
+      }
       const latest = scoreSources.map((s) => s.publishedAt).filter(Boolean).sort().at(-1) ?? null;
       const status = result.rejection ? "rejected" : result.overall >= settings.min_candidate_score ? "ranked" : "below_threshold";
       const reasonParts = [
@@ -177,7 +210,7 @@ export async function researchStage(sc: StageContext): Promise<StageResult> {
           event_date: c.event_date && /^\d{4}-\d{2}-\d{2}$/.test(c.event_date) ? c.event_date : null,
           latest_source_at: latest,
           entities: c.entities,
-          suggested_format: c.suggested_format ?? null,
+          suggested_format: c.suggested_format ?? (plan.mode === "feature" ? "feature" : null),
           confidence: c.confidence,
           duplicate_risk: c.duplicate_risk,
           scores: { ...result.components, model_relevance: c.relevance, model_originality: c.originality, reasons: result.reasons },
@@ -215,6 +248,9 @@ export async function researchStage(sc: StageContext): Promise<StageResult> {
   });
 
   if (ranked.length === 0) {
+    const harder = tryHarder(sc, scored.length ? "No candidate met the editorial threshold" : "Research returned no usable candidates", run.candidates_checked);
+    if (harder) return harder;
+    if (isTargeted(run) && run.articles_produced === 0) return gaveUp(sc, "skipped", run.candidates_checked);
     return {
       next: run.articles_produced > 0 ? (await finalStatusForProduced(sc)) : "skipped",
       patch: { outcome_reason: run.articles_produced > 0 ? "No further candidates met the threshold" : "No candidate met the minimum editorial quality and evidence threshold" },

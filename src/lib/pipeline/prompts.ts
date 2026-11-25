@@ -37,7 +37,30 @@ export const discoverySchema = z.object({
 });
 export type DiscoveryOutput = z.infer<typeof discoverySchema>;
 
-export function discoveryPrompt(category: Category, nowIso: string, exclude: string[]): { system: string; prompt: string } {
+export interface DiscoveryOptions {
+  /** How far back news may go. Default 2 days. */
+  windowDays?: number;
+  /** "feature": no fresh news qualified, so look for a sourced feature/explainer instead. */
+  mode?: "news" | "feature";
+}
+
+const CANDIDATE_FIELDS =
+  "For each story give: headline (factual, no clickbait), topic (short noun phrase), category (exactly one of: anime, gaming, esports), summary (the central verified development), evidence (what the sources actually state), event_date (YYYY-MM-DD or null), entities (games, studios, teams, players, franchises, events), sources (only URLs you actually opened in search results, with title and published_at ISO date if shown), relevance 0-1 (reader interest), originality 0-1 (room for useful added context/analysis), confidence (low/medium/high), duplicate_risk, suggested_format (news, explainer, analysis, roundup, feature).";
+
+export function discoveryPrompt(category: Category, nowIso: string, exclude: string[], opts: DiscoveryOptions = {}): { system: string; prompt: string } {
+  const days = opts.windowDays ?? 2;
+  const window = days <= 2 ? "the last 48 hours" : `the last ${days} days`;
+  const task =
+    opts.mode === "feature"
+      ? [
+          `No fresh ${CATEGORY_LABEL[category]} news story qualified today, so propose up to 4 timely FEATURE articles instead: explainers, guides, "everything we know so far" pieces, or roundups of upcoming releases or events.`,
+          `Each feature must be anchored in something readers care about right now (an upcoming release, an ongoing season or tournament, a recent trend) and built ONLY from facts stated in sources you actually opened. Prefer sources from ${window}; older official pages are fine for background.`,
+          "Set suggested_format to explainer, roundup or feature. The headline must describe the feature honestly (no fake news hooks).",
+        ]
+      : [
+          "Search the web with a few distinct queries (official announcements, established trade publications, tournament organisers, studio/publisher newsrooms). Use at most 4 searches in total.",
+          `Find up to 4 distinct stories published or announced in ${window} that readers would care about in the next few hours or days.`,
+        ];
   return {
     system:
       "You are the research desk of an independent news site covering anime, gaming and esports. " +
@@ -46,12 +69,52 @@ export function discoveryPrompt(category: Category, nowIso: string, exclude: str
     prompt: [
       `Current time (UTC): ${nowIso}.`,
       `Category: ${CATEGORY_LABEL[category]} — ${CATEGORY_SCOPE[category]}.`,
-      "Search the web with a few distinct queries (official announcements, established trade publications, tournament organisers, studio/publisher newsrooms). Use at most 4 searches in total.",
-      "Find up to 4 distinct stories published or announced in the last 48 hours that readers would care about in the next few hours or days.",
+      ...task,
+      opts.mode === "feature" ? "Use at most 4 searches in total." : "",
       "Prefer primary sources and established publications. Skip content farms, unsourced rumours, social posts without corroboration, and stories outside this category.",
       "Distinguish the source publication date from the date the event happens (event_date).",
       exclude.length ? `Do NOT return these already-considered stories:\n- ${exclude.slice(0, 30).join("\n- ")}` : "",
-      "For each story give: headline (factual, no clickbait), topic (short noun phrase), category (exactly one of: anime, gaming, esports), summary (the central verified development), evidence (what the sources actually state), event_date (YYYY-MM-DD or null), entities (games, studios, teams, players, franchises, events), sources (only URLs you actually opened in search results, with title and published_at ISO date if shown), relevance 0-1 (reader interest), originality 0-1 (room for useful added context/analysis), confidence (low/medium/high), duplicate_risk, suggested_format (news, explainer, analysis, roundup).",
+      CANDIDATE_FIELDS,
+      "Respond with ONLY a JSON object: {\"candidates\": [...], \"queries_used\": [...]}. Return {\"candidates\": []} if nothing qualifies.",
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
+  };
+}
+
+export interface TopicBrief {
+  title: string;
+  category: Category;
+  notes: string;
+  endDate: string;
+}
+
+/**
+ * Research for one article in an editor-defined topic series. Each day needs a
+ * different angle: fresh news first, otherwise a sourced aspect not yet covered.
+ */
+export function topicPrompt(topic: TopicBrief, nowIso: string, covered: string[], exclude: string[], opts: { broaden?: boolean } = {}): { system: string; prompt: string } {
+  return {
+    system:
+      "You are the research desk of an independent news site covering anime, gaming and esports. " +
+      "An editor has asked for one article a day about a specific topic, each covering a different aspect. " +
+      UNTRUSTED_GUARD,
+    prompt: [
+      `Current time (UTC): ${nowIso}.`,
+      `TOPIC: ${topic.title}`,
+      `Category: ${CATEGORY_LABEL[topic.category]} — ${CATEGORY_SCOPE[topic.category]}.`,
+      topic.notes ? `Editor's notes on the angle and focus (follow them, but they are not facts): ${topic.notes}` : "",
+      covered.length
+        ? `Articles in this series already written (do NOT repeat their angle or main information):\n- ${covered.slice(0, 30).join("\n- ")}`
+        : "This is the first article in the series.",
+      "Search the web with a few distinct queries. Use at most 4 searches in total.",
+      opts.broaden
+        ? "Propose up to 4 distinct angles for today's article. Any well-sourced aspect is fine: background and history, story so far, cast and staff, characters, release and where to watch, reception, records and statistics, comparisons, what to expect next."
+        : "Propose up to 4 distinct angles for today's article. First choice: genuine news about the topic from the last 7 days. Otherwise, a well-sourced aspect not yet covered (background, story so far, cast and staff, release and where to watch, reception, what to expect next).",
+      "Every angle must stay about the topic, be supported by sources you actually opened, and add something the earlier articles did not. Never invent news to make an angle feel current.",
+      exclude.length ? `Do NOT return these already-considered angles:\n- ${exclude.slice(0, 30).join("\n- ")}` : "",
+      `Use category "${topic.category}" for every angle. Put the angle in topic (e.g. "${topic.title}: cast and staff").`,
+      CANDIDATE_FIELDS,
       "Respond with ONLY a JSON object: {\"candidates\": [...], \"queries_used\": [...]}. Return {\"candidates\": []} if nothing qualifies.",
     ]
       .filter(Boolean)
@@ -78,7 +141,7 @@ export const dedupeJsonSchema = {
   },
 };
 
-export function dedupePrompt(candidate: { headline: string; summary: string }, existing: { title: string; excerpt: string; date: string | null }) {
+export function dedupePrompt(candidate: { headline: string; summary: string }, existing: { title: string; excerpt: string; date: string | null }, opts: { series?: string } = {}) {
   return {
     system:
       "You compare a proposed news story with an article already on the site and decide whether writing the new story would duplicate existing coverage. " +
@@ -94,6 +157,9 @@ export function dedupePrompt(candidate: { headline: string; summary: string }, e
       `Excerpt: ${existing.excerpt.slice(0, 700)}`,
       "",
       "same_story = same underlying announcement/result with no materially new information. new_development = a genuinely new event about a previously covered topic (e.g. a release date after an earlier reveal). unrelated = different subject. uncertain = cannot tell.",
+      opts.series
+        ? `The site is running a daily series about "${opts.series}", so the existing article may be an earlier part of it. A part that covers a clearly different aspect (for example cast and staff versus release date versus story recap) is new_development. Answer same_story only if the proposed story would mainly repeat the existing article's information.`
+        : "",
       "Respond with JSON {verdict, confidence (0-1), reason}.",
     ].join("\n"),
   };

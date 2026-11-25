@@ -34,24 +34,36 @@ describe("scheduler authentication", () => {
 });
 
 describe("scheduler tick", () => {
-  it("creates the due slot exactly once even if ticks repeat, and runs it to completion", async () => {
+  it("creates one run per category for the due slot, exactly once, and works through them back to back", async () => {
     const h = await harness({ settings: { automation_changed_at: "2026-10-27T00:00:00Z" } });
     const t1 = await runTick(h.deps, { owner: "t1", budgetMs: 600_000 });
     const t2 = await runTick(h.deps, { owner: "t2", budgetMs: 600_000 });
-    expect(t1.created).toBe(1);
+    expect(t1.created).toBe(3);
     expect(t2.created).toBe(0);
     const scheduled = h.store.runs.filter((r) => r.trigger === "schedule");
-    expect(scheduled).toHaveLength(1);
-    expect(scheduled[0]!.slot_key).toBe("2026-10-27T09:00");
+    expect(scheduled.map((r) => r.slot_key)).toEqual(["2026-10-27T09:00#anime", "2026-10-27T09:00#gaming", "2026-10-27T09:00#esports"]);
+    expect(scheduled.map((r) => r.category)).toEqual(["anime", "gaming", "esports"]);
+    // The mock only has anime news; the other desks try every effort level before giving up.
     expect(scheduled[0]!.status).toBe("drafted");
+    expect(scheduled[1]!.escalation).toBe(2);
+    expect(scheduled[1]!.status).toBe("skipped");
+    expect(scheduled[2]!.status).toBe("skipped");
+    expect(h.store.notifications.filter((n) => n.title === "No article for this slot")).toHaveLength(2);
+  });
+
+  it("leaves a slot alone if it already ran the old way (one run for all categories)", async () => {
+    const h = await harness({ settings: { automation_changed_at: "2026-10-27T00:00:00Z" } });
+    await h.store.createRun({ workspace_id: h.ws, trigger: "schedule", slot_key: "2026-10-27T09:00", scheduled_for: NOW.toISOString(), status: "missed", publishing_mode: "draft_only", triggered_by: null });
+    expect((await runTick(h.deps, { owner: "t", budgetMs: 600_000 })).created).toBe(0);
   });
 
   it("records missed slots and notifies", async () => {
     const h = await harness({ settings: { automation_changed_at: "2026-10-26T00:00:00Z" } });
     const t = await runTick(h.deps, { owner: "t", budgetMs: 600_000 });
-    expect(t.missed).toBe(3);
-    expect(h.store.runs.filter((r) => r.status === "missed")).toHaveLength(3);
-    expect(h.store.notifications.some((n) => n.title.includes("Missed"))).toBe(true);
+    // Three slots yesterday after the change time (09:00 is still due today), each missed for three categories.
+    expect(t.missed).toBe(9);
+    expect(h.store.runs.filter((r) => r.status === "missed")).toHaveLength(9);
+    expect(h.store.notifications.filter((n) => n.title.includes("Missed"))).toHaveLength(3);
   });
 
   it("pause: no runs are created and queued scheduled runs are cancelled", async () => {
@@ -66,7 +78,7 @@ describe("scheduler tick", () => {
     const h = await harness({ settings: { automation_enabled: false, automation_changed_at: "2026-10-27T00:00:00Z" } });
     await runTick(h.deps, { owner: "t", budgetMs: 600_000 });
     h.store.settings.get(h.ws)!.automation_enabled = true;
-    expect((await runTick(h.deps, { owner: "t", budgetMs: 600_000 })).created).toBe(1);
+    expect((await runTick(h.deps, { owner: "t", budgetMs: 600_000 })).created).toBe(3);
   });
 
   it("only one active run per workspace is advanced at a time", async () => {

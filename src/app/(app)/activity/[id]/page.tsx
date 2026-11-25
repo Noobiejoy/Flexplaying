@@ -9,6 +9,7 @@ import { currentWorkspace } from "@/lib/auth/session";
 import { formatUsd } from "@/lib/costs/pricing";
 import { duration, formatInZone } from "@/lib/dashboard/time";
 import { ACTIVE_STATUSES, PIPELINE, railStates, stageDurations } from "@/lib/dashboard/stages";
+import { ESCALATION_LABEL, runLabel, slotTime } from "@/lib/pipeline/targets";
 
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
@@ -46,6 +47,7 @@ export default async function RunDetail({ params, searchParams }: { params: Prom
     sb.from("articles").select("id,headline,status,wp_url,category").eq("run_id", id),
   ]);
   const active = ACTIVE_STATUSES.includes(run.status);
+  const { data: topic } = run.topic_id ? await sb.from("editorial_topics").select("id,title").eq("id", run.topic_id).maybeSingle() : { data: null };
   const L = logs.data ?? [];
   const visible = L.filter((l) => l.level !== "started");
   // Group consecutive entries by stage so retries and candidate loops read as separate passes.
@@ -65,11 +67,13 @@ export default async function RunDetail({ params, searchParams }: { params: Prom
     <>
       <PageHeader
         kicker={<Link href="/activity" className="hover:text-ink">Runs</Link>}
-        title={run.trigger === "schedule" ? `${run.slot_key?.slice(11)} scheduled run` : "Manual run"}
+        title={`${runLabel(run, topic?.title)}: ${run.trigger === "schedule" ? `${slotTime(run.slot_key)} scheduled run` : "manual run"}`}
         description={
           <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
             <RunStatus status={run.status} />
             <span>{statusLabel(run.publishing_mode)}</span>
+            {run.topic_id && topic && <Link href="/topics" className="text-[var(--link)] hover:underline">Topic page</Link>}
+            {(run.category || run.topic_id) && <span>Search effort: {ESCALATION_LABEL[run.escalation] ?? "normal search"}</span>}
             <span className="text-ink-3">Started {formatInZone(run.started_at, tz)}, took {duration(run.started_at, run.completed_at)}</span>
           </span>
         }

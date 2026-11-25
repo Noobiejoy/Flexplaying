@@ -139,6 +139,7 @@ export default async function Settings({ searchParams }: { searchParams: Promise
             <Hidden ws={ws} />
             <div className="md:col-span-3">
               <span className="mb-1 block text-xs font-medium text-ink-2">Categories</span>
+              <p className="mb-2 text-[13px] text-ink-3">Every scheduled run writes one article for each enabled category, one after another. Topics from the <a className="text-[var(--link)] hover:underline" href="/topics">Topics</a> page come on top.</p>
               <div className="flex flex-wrap gap-3">
                 {CATEGORIES.map((c) => (
                   <label key={c} className="flex items-center gap-1.5 text-sm"><input type="checkbox" name="enabled_categories" value={c} defaultChecked={s?.enabled_categories?.includes(c)} disabled={dis} />{CATEGORY_LABEL[c]}</label>
@@ -147,12 +148,10 @@ export default async function Settings({ searchParams }: { searchParams: Promise
             </div>
             <Field label="Min candidate score (0–1)" hint="Below this, the run skips rather than inventing a story"><input className="field" name="min_candidate_score" type="number" step="0.01" min="0" max="1" defaultValue={s?.min_candidate_score} disabled={dis} /></Field>
             <Field label="Min quality score (0–1)"><input className="field" name="min_quality_score" type="number" step="0.01" min="0" max="1" defaultValue={s?.min_quality_score} disabled={dis} /></Field>
-            <Field label="Articles per run"><input className="field" name="max_articles_per_run" type="number" min="1" max="3" defaultValue={s?.max_articles_per_run} disabled={dis} /></Field>
-            <Field label="Daily article limit"><input className="field" name="daily_article_limit" type="number" min="0" max="24" defaultValue={s?.daily_article_limit} disabled={dis} /></Field>
             <Field label="Target words (min)"><input className="field" name="target_words_min" type="number" defaultValue={s?.target_words_min} disabled={dis} /></Field>
             <Field label="Target words (max)"><input className="field" name="target_words_max" type="number" defaultValue={s?.target_words_max} disabled={dis} /></Field>
-            <Field label="Research rounds per run" hint="Re-research if every candidate is a duplicate"><input className="field" name="max_research_rounds" type="number" min="1" max="4" defaultValue={s?.max_research_rounds} disabled={dis} /></Field>
-            <Field label="Max candidates checked per run"><input className="field" name="max_candidates_per_run" type="number" min="1" max="12" defaultValue={s?.max_candidates_per_run} disabled={dis} /></Field>
+            <Field label="Research rounds (normal search)" hint="After these, the desk widens to the last 7 days, then falls back to a feature"><input className="field" name="max_research_rounds" type="number" min="1" max="4" defaultValue={s?.max_research_rounds} disabled={dis} /></Field>
+            <Field label="Candidates checked (normal search)"><input className="field" name="max_candidates_per_run" type="number" min="1" max="12" defaultValue={s?.max_candidates_per_run} disabled={dis} /></Field>
             <Field label="Missed-run grace (minutes)"><input className="field" name="missed_run_grace_minutes" type="number" min="10" max="360" defaultValue={s?.missed_run_grace_minutes} disabled={dis} /></Field>
             <Field label="If the quality gate fails"><select className="field" name="quality_fail_policy" defaultValue={s?.quality_fail_policy} disabled={dis}><option value="draft">Save as WordPress draft for review</option><option value="fail">Stop; don&apos;t touch WordPress</option></select></Field>
             <Field label="If thumbnail generation fails (after retries)"><select className="field" name="image_failure_policy" defaultValue={s?.image_failure_policy} disabled={dis}><option value="draft">Save as draft without an image</option><option value="fail">Fail the run</option></select></Field>

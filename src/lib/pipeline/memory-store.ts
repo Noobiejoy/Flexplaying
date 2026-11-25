@@ -19,6 +19,7 @@ import {
   type SourceInput,
   type SourceRecord,
   type StageLogInput,
+  type TopicRecord,
   type UsageEventInput,
   type WorkspaceContext,
   type WorkspaceSettings,
@@ -83,6 +84,7 @@ export class MemoryStore implements PipelineStore {
   connections = new Map<string, WordPressConnectionInfo>();
   secrets = new Map<string, string>();
   schedules = new Map<string, string[]>();
+  topics: TopicRecord[] = [];
   now: () => Date = () => new Date();
 
   addWorkspace(id: string, opts: { settings?: Partial<WorkspaceSettings>; wp?: WordPressConnectionInfo | null; times?: string[] } = {}) {
@@ -98,6 +100,13 @@ export class MemoryStore implements PipelineStore {
       });
     }
     this.schedules.set(id, opts.times ?? ["09:00", "13:00", "19:00"]);
+  }
+
+  addTopic(workspaceId: string, t: Partial<TopicRecord> & Pick<TopicRecord, "title" | "category" | "end_date">): TopicRecord {
+    const now = this.now().toISOString();
+    const topic: TopicRecord = { id: randomUUID(), workspace_id: workspaceId, notes: "", local_time: null, enabled: true, created_at: now, updated_at: now, ...t };
+    this.topics.push(topic);
+    return topic;
   }
 
   async createRun(input: NewRunInput) {
@@ -128,6 +137,9 @@ export class MemoryStore implements PipelineStore {
       error_message: null,
       triggered_by: input.triggered_by,
       created_at: this.now().toISOString(),
+      category: input.category ?? null,
+      topic_id: input.topic_id ?? null,
+      escalation: 0,
     };
     this.runs.push(run);
     return { ...run };
@@ -174,8 +186,29 @@ export class MemoryStore implements PipelineStore {
   async hasOtherActiveRun(workspaceId: string, excludeRunId: string) {
     const self = this.runs.find((r) => r.id === excludeRunId);
     return this.runs.some(
-      (r) => r.workspace_id === workspaceId && r.id !== excludeRunId && !isTerminal(r.status) && (!self || r.created_at < self.created_at || r.status !== "queued"),
+      (r) =>
+        r.workspace_id === workspaceId &&
+        r.id !== excludeRunId &&
+        !isTerminal(r.status) &&
+        (!self || r.created_at < self.created_at || (r.created_at === self.created_at && this.runs.indexOf(r) < this.runs.indexOf(self)) || r.status !== "queued"),
     );
+  }
+
+  async existingSlotKeys(workspaceId: string, keys: string[]) {
+    return new Set(this.runs.filter((r) => r.workspace_id === workspaceId && r.slot_key && keys.includes(r.slot_key)).map((r) => r.slot_key!));
+  }
+
+  async getTopic(id: string) {
+    const t = this.topics.find((x) => x.id === id);
+    return t ? { ...t } : null;
+  }
+
+  async topicArticles(topicId: string, limit: number) {
+    return this.articles
+      .filter((a) => a.topic_id === topicId && ["drafted", "published", "needs_review"].includes(a.status))
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .slice(0, limit)
+      .map((a) => ({ headline: a.headline, created_at: a.created_at, status: a.status }));
   }
 
   async log(entry: StageLogInput) {
@@ -204,6 +237,10 @@ export class MemoryStore implements PipelineStore {
         graceMinutes: s.missed_run_grace_minutes,
         publishingMode: s.publishing_mode,
         localTimes: this.schedules.get(s.workspace_id) ?? [],
+        categories: s.enabled_categories,
+        topics: this.topics
+          .filter((t) => t.workspace_id === s.workspace_id && t.enabled)
+          .map(({ id, category, local_time, end_date, created_at, updated_at }) => ({ id, category, local_time, end_date, created_at, updated_at })),
       }));
   }
 

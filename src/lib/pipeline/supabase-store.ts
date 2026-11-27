@@ -24,6 +24,7 @@ import type {
   UsageEventInput,
   WorkspaceContext,
 } from "./types";
+import { queueOrder } from "./types";
 
 const ACTIVE = "(queued,researching,deduplicating,fact_checking,writing,quality_check,generating_image,publishing,retry_scheduled)";
 const PRODUCED = ["drafted", "published", "needs_review"];
@@ -73,10 +74,12 @@ export class SupabaseStore implements PipelineStore {
         .or(`next_attempt_at.is.null,next_attempt_at.lte.${iso}`)
         .or(`lease_expires_at.is.null,lease_expires_at.lt.${iso}`)
         .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
         .limit(limit),
       "list runnable",
     ) as RunRecord[];
-    return rows;
+    // Re-sort in JS too, so the order is byte-for-byte the one hasOtherActiveRun uses.
+    return rows.sort(queueOrder);
   }
 
   async hasOtherActiveRun(workspaceId: string, excludeRunId: string) {
@@ -86,7 +89,7 @@ export class SupabaseStore implements PipelineStore {
       "active runs",
     ) as { id: string; status: string; created_at: string }[];
     // Queued runs go strictly in creation order (id breaks ties between runs created together).
-    return rows.some((r) => !self || r.created_at < self.created_at || (r.created_at === self.created_at && r.id < self.id) || r.status !== "queued");
+    return rows.some((r) => !self || queueOrder(r, self) < 0 || r.status !== "queued");
   }
 
   async existingSlotKeys(workspaceId: string, keys: string[]) {

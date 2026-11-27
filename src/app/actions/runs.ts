@@ -7,7 +7,7 @@ import { z } from "zod";
 import { requireRole } from "@/lib/auth/session";
 import { rateLimit } from "@/lib/auth/rate-limit";
 import { adminClient } from "@/lib/supabase/admin";
-import { processRun, retryFailedRun } from "@/lib/pipeline/engine";
+import { isWaitingTurn, processRun, retryFailedRun } from "@/lib/pipeline/engine";
 import { serverDeps } from "@/lib/pipeline/server-deps";
 import { isTerminal, type RunRecord } from "@/lib/pipeline/types";
 import { topicActiveOn } from "@/lib/pipeline/targets";
@@ -30,10 +30,14 @@ function kick(workspaceId: string) {
       for (let i = 0; i < 6; i++) {
         const remaining = 170_000 - (Date.now() - started);
         if (remaining < 60_000) break;
-        const next = (await deps.store.listRunnableRuns(new Date(), 40)).find((r) => r.workspace_id === workspaceId);
-        if (!next) break;
-        const res = await processRun(deps, next.id, { owner, budgetMs: remaining - 10_000 });
-        if (!isTerminal(res.status)) break;
+        const queue = (await deps.store.listRunnableRuns(new Date(), 40)).filter((r) => r.workspace_id === workspaceId);
+        // Skip past runs that are only waiting their turn; stop once one run has done work.
+        let res = null;
+        for (const next of queue) {
+          res = await processRun(deps, next.id, { owner, budgetMs: 170_000 - (Date.now() - started) - 10_000 });
+          if (!isWaitingTurn(res)) break;
+        }
+        if (!res || isWaitingTurn(res) || !isTerminal(res.status)) break;
       }
     } catch (e) {
       console.error("manual run processing failed", (e as Error).message);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { signTick, verifySchedulerRequest } from "@/lib/scheduler/signature";
 import { runTick } from "@/lib/scheduler/tick";
+import { isTerminal } from "@/lib/pipeline/types";
 import { harness, NOW } from "./helpers/fixtures";
 
 const SECRET = "s".repeat(48);
@@ -79,6 +80,28 @@ describe("scheduler tick", () => {
     await runTick(h.deps, { owner: "t", budgetMs: 600_000 });
     h.store.settings.get(h.ws)!.automation_enabled = true;
     expect((await runTick(h.deps, { owner: "t", budgetMs: 600_000 })).created).toBe(3);
+  });
+
+  it("runs created in the same instant still all run, one after another, whatever order the queue is listed in", async () => {
+    for (const reversed of [false, true]) {
+      const h = await harness();
+      const ids: string[] = [];
+      for (const category of ["anime", "gaming", "esports"] as const) {
+        const r = await h.store.createRun({ workspace_id: h.ws, trigger: "manual", slot_key: null, scheduled_for: null, status: "queued", publishing_mode: "dry_run", triggered_by: null, category });
+        ids.push(r!.id);
+      }
+      const mine = h.store.runs.filter((r) => ids.includes(r.id));
+      for (const r of mine) r.created_at = mine[0]!.created_at; // e.g. one multi-row insert
+      if (reversed) {
+        // A queue listed in a different order from the turn check must not stall either.
+        const list = h.store.listRunnableRuns.bind(h.store);
+        h.store.listRunnableRuns = async (now, limit) => (await list(now, limit)).reverse();
+      }
+      await runTick(h.deps, { owner: "t", budgetMs: 600_000 });
+      expect(mine.map((r) => r.status).every((s) => isTerminal(s)), `reversed=${reversed}: ${mine.map((r) => r.status)}`).toBe(true);
+      const startOrder = h.store.logs.filter((l) => l.message.startsWith("Run started") && ids.includes(l.run_id)).map((l) => l.run_id);
+      expect(startOrder).toEqual([...ids].sort()); // tie broken by id, every time
+    }
   });
 
   it("only one active run per workspace is advanced at a time", async () => {

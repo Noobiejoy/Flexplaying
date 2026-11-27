@@ -34,6 +34,19 @@ export function isTerminal(s: string): s is TerminalStatus {
   return (TERMINAL_STATUSES as readonly string[]).includes(s);
 }
 
+/**
+ * The one queue order for runs: oldest first, id breaking ties between runs
+ * created in the same instant. Both the runnable-runs listing and the
+ * "is another run ahead of me?" check must use exactly this order, or a run
+ * can be listed first while waiting on one listed after it.
+ */
+export function queueOrder(a: { created_at: string; id: string }, b: { created_at: string; id: string }): number {
+  const ta = Date.parse(a.created_at);
+  const tb = Date.parse(b.created_at);
+  if (ta !== tb) return ta < tb ? -1 : 1;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
 export type PublishingMode = "dry_run" | "draft_only" | "auto_publish";
 
 export interface RunRecord {

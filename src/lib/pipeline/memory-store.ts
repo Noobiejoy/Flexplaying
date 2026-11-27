@@ -5,6 +5,7 @@ import { DEFAULT_PREFERENCES } from "@/lib/editorial/preferences";
 import type { PricingRow } from "@/lib/costs/pricing";
 import {
   isTerminal,
+  queueOrder,
   type ArticleInput,
   type ArticleRecord,
   type AutomatedWorkspace,
@@ -178,7 +179,7 @@ export class MemoryStore implements PipelineStore {
       .filter((r) => !isTerminal(r.status))
       .filter((r) => !r.next_attempt_at || new Date(r.next_attempt_at) <= now)
       .filter((r) => !r.lease_expires_at || new Date(r.lease_expires_at) < now)
-      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .sort(queueOrder)
       .slice(0, limit)
       .map((r) => ({ ...r }));
   }
@@ -190,7 +191,7 @@ export class MemoryStore implements PipelineStore {
         r.workspace_id === workspaceId &&
         r.id !== excludeRunId &&
         !isTerminal(r.status) &&
-        (!self || r.created_at < self.created_at || (r.created_at === self.created_at && this.runs.indexOf(r) < this.runs.indexOf(self)) || r.status !== "queued"),
+        (!self || queueOrder(r, self) < 0 || r.status !== "queued"),
     );
   }
 

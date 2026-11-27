@@ -1,5 +1,5 @@
 import { evaluateSlots, type SlotInstance } from "@/lib/schedule/slots";
-import { processRun, type ProcessResult } from "@/lib/pipeline/engine";
+import { isWaitingTurn, processRun, type ProcessResult } from "@/lib/pipeline/engine";
 import type { PipelineDeps } from "@/lib/pipeline/context";
 import { slotTargets, targetSlotKey, topicActiveOn, type RunTarget } from "@/lib/pipeline/targets";
 import { isTerminal, type AutomatedWorkspace } from "@/lib/pipeline/types";
@@ -95,15 +95,24 @@ export async function runTick(deps: PipelineDeps, opts: { owner: string; budgetM
 
   const processed: ProcessResult[] = [];
   const busy = new Set<string>();
-  const runnable = await deps.store.listRunnableRuns(now, 40);
-  for (const run of runnable) {
-    if (busy.has(run.workspace_id)) continue;
-    const remaining = opts.budgetMs - (Date.now() - started);
-    if (remaining < (processed.length ? MIN_BUDGET_FOR_NEXT_RUN_MS : 20_000)) break;
-    const res = await processRun(deps, run.id, { owner: opts.owner, budgetMs: remaining - 15_000 });
-    processed.push(res);
-    // A finished run frees the workspace for its next queued run in this same tick.
-    if (!isTerminal(res.status)) busy.add(run.workspace_id);
+  // Each pass reads the queue fresh. When a run finishes, the next pass starts
+  // from the top, so the run whose turn it now is gets picked up whatever order
+  // the queue happened to be listed in. A finished run leaves the queue, so
+  // passes always end; the cap is only a backstop.
+  passes: for (let pass = 0; pass < 50; pass++) {
+    const runnable = await deps.store.listRunnableRuns(deps.now(), 40);
+    for (const run of runnable) {
+      if (busy.has(run.workspace_id)) continue;
+      const remaining = opts.budgetMs - (Date.now() - started);
+      if (remaining < (processed.length ? MIN_BUDGET_FOR_NEXT_RUN_MS : 20_000)) break passes;
+      const res = await processRun(deps, run.id, { owner: opts.owner, budgetMs: remaining - 15_000 });
+      // A run that is only waiting its turn did no work: try the next one in the queue.
+      if (isWaitingTurn(res)) continue;
+      processed.push(res);
+      if (isTerminal(res.status)) continue passes; // frees its workspace: re-read the queue
+      busy.add(run.workspace_id);
+    }
+    break;
   }
   return { created, missed, processed, workspaces: workspaces.length };
 }

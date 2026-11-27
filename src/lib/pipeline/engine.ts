@@ -51,6 +51,16 @@ export interface ProcessResult {
 }
 
 /**
+ * True when processRun did nothing because the run is waiting for another run
+ * in its workspace to go first. Callers then try the next run in the queue
+ * instead of treating the workspace as busy, so the queue can never stall on
+ * an ordering mismatch.
+ */
+export function isWaitingTurn(res: ProcessResult): boolean {
+  return res.claimed && res.status === "queued" && res.stagesRun === 0;
+}
+
+/**
  * Advance a run through as many stages as fit in the time budget. Each stage's
  * outcome is persisted before the next starts, so an interrupted request (or a
  * crashed function) resumes from the last completed stage on the next tick.
